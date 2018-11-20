@@ -13,12 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
-/**
- * @author Swaminathan Vasanth Rajaraman <swaminathanvasanth.r@gmail.com>
- *
- */
-
 package iudx.apiserver;
 
 import java.util.Map;
@@ -38,6 +32,16 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.JksOptions;
 import io.vertx.rabbitmq.RabbitMQClient;
 import io.vertx.rabbitmq.RabbitMQOptions;
+
+/**
+ * <h1>IUDX API Server</h1> An Open Source implementation of India Urban Data
+ * Exchange (IUDX) platform APIs using Vert.x, an event driven and non-blocking
+ * high performance reactive framework, for enabling seamless data exchange in
+ * Smart Cities.
+ * 
+ * @author Swaminathan Vasanth Rajaraman <swaminathanvasanth.r@gmail.com>
+ * @version 1.0.0
+ */
 
 public class apiserver extends AbstractVerticle implements Handler<HttpServerRequest>, Runnable {
 
@@ -77,6 +81,17 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	// IUDX APIs ver. 1.0.0
 	private static final String PATH_PUBLISH_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_PUBLISH;
 	
+	/**
+	 * This method is used to setup and start the Vert.x server. It uses the
+	 * available processors (n) to create (n*2) workers and also gets the available
+	 * URLs from the URL class.
+	 * 
+	 * @param args Unused.
+	 * @return Nothing.
+	 * @exception Exception On setup or start error.
+	 * @see Exception
+	 */
+
 	public static void main(String[] args) throws Exception {
 		int procs = Runtime.getRuntime().availableProcessors();
 		vertx = Vertx.vertx();
@@ -98,7 +113,18 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		broker_username = URLs.getBrokerUsername();
 		broker_password = URLs.getBrokerPassword();
 	}
-
+	
+	/**
+	 * This method is used to setup certificates for enabling HTTPs in Vert.x
+	 * server. It uses the provided .jks (Java Key Store) certificate in the path
+	 * and the password to enable SSL/TLS over HTTP in the desired port.
+	 * 
+	 * @param Nothing.
+	 * @return Nothing.
+	 * @exception Exception On start error.
+	 * @see Exception
+	 */
+	
 	@Override
 	public void start() throws Exception {
 		int port = 8443;
@@ -125,6 +151,15 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		
 		
 	}
+	
+	/**
+	 * This method is used to handle the client requests and map it to the
+	 * corresponding APIs using a switch case.
+	 * 
+	 * @param HttpServerRequest event This is the handle for the incoming request
+	 *                          from client.
+	 * @return Nothing.
+	 */
 
 	@Override
 	public void handle(HttpServerRequest event) {
@@ -134,6 +169,16 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			break;
 		}
 	}
+	
+	/**
+	 * This method is the implementation of Publish API, which handles the
+	 * publication request by clients.
+	 * 
+	 * @param HttpServerRequest event This is the handle for the incoming request
+	 *                          from client.
+	 * @return HttpServerResponse resp This sends the appropriate response for the
+	 *         incoming request.
+	 */
 
 	private void publish(HttpServerRequest request) {
 		
@@ -173,6 +218,20 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			resp.setStatusCode(200).end();
 		}
 	}
+
+	/**
+	 * This method is used to create a connection pool of RabbitMQ clients.
+	 * 
+	 * @param String connection_pool_id This is the key for the ConcurrentHashMap.
+	 *               The id is used to map the created connection to a
+	 *               RabbitMQClient.
+	 * @param String username This is the username to be used for the request to
+	 *               RabbitMQ.
+	 * @param String password This is the the password to be used for the request to
+	 *               RabbitMQ
+	 * @return Future<RabbitMQClient> create_broker_client This returns a Future
+	 *         which represents the result of an asynchronous task.
+	 */
 
 	public Future<RabbitMQClient> getRabbitMQClient(String connection_pool_id, String username, String password) {
 
