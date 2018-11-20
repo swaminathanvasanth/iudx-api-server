@@ -13,12 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
-/**
- * @author Swaminathan Vasanth Rajaraman <swaminathanvasanth.r@gmail.com>
- *
- */
-
 package iudx.apiserver;
 
 import java.util.Map;
@@ -39,45 +33,84 @@ import io.vertx.core.net.JksOptions;
 import io.vertx.rabbitmq.RabbitMQClient;
 import io.vertx.rabbitmq.RabbitMQOptions;
 
+/**
+ * <h1>IUDX API Server</h1> An Open Source implementation of India Urban Data
+ * Exchange (IUDX) platform APIs using Vert.x, an event driven and non-blocking
+ * high performance reactive framework, for enabling seamless data exchange in
+ * Smart Cities.
+ * 
+ * @author Swaminathan Vasanth Rajaraman <swaminathanvasanth.r@gmail.com>
+ * @version 1.0.0
+ */
+
 public class apiserver extends AbstractVerticle implements Handler<HttpServerRequest>, Runnable {
 
 	public static Vertx vertx;
 	private HttpServer server;
-	
+	/** This handles the HTTP response for all API requests */
 	private HttpServerResponse resp;
+	/** Handles the ID header in the HTTP Publish API request */
 	private String requested_id;
+	/** Handles the apikey header in the HTTP Publish API request */
 	private String requested_apikey;
+	/** Handles the to header in the HTTP Publish API request */
 	private String to;
+	/** Handles the subject header in the HTTP Publish API request */
 	private String subject;
+	/** Handles the message-type header in the HTTP Publish API request */
 	private String message_type;
+	/** Handles the Vert.x RabbitMQ client HashMap ID */
 	private String connection_pool_id;	
 	private JsonObject message;
-	
+	/** Handles the Vert.x RabbitMQ client connections in a ConcurrentHashMap with a connection pool ID as key */
 	Map<String, RabbitMQClient> rabbitpool = new ConcurrentHashMap<String, RabbitMQClient>();
+	/**  A RabbitMQClient Future handler to notify the caller about the status of client connection */
 	Future<RabbitMQClient> broker_client;
+	/**  A RabbitMQClient Future handler to notify the caller about the status of client connection */
 	Future<RabbitMQClient> create_broker_client;
+	/**  A RabbitMQClient configuration handler to modify connection parameters */
 	RabbitMQOptions broker_config;
+	/**  A RabbitMQ client to use the AMQP connection to interact with RabbitMQ */
 	RabbitMQClient client;
-	
+	/**  Handles the URL at which RabbitMQ server is running */
 	public static String broker_url;
+	/**  Handles the username to be used to connect with RabbitMQ server */
 	public static String broker_username;
+	/**  Handles the password to be used to connect with RabbitMQ server */
 	public static String broker_password;
+	/**  Handles the port to be used to connect with RabbitMQ server */
 	public static int broker_port;
+	/**  Handles the virtual host to be used to connect with RabbitMQ server */
 	public static String broker_vhost;
 	
 	// IUDX Base Path
+	/**  Defines the API server base path */
 	private static final String PATH_BASE = "/api/";
 	
 	// IUDX API version
+	/**  Defines the version of API */
 	private static final String PATH_VERSION_1_0_0 = "1.0.0";
 	
 	// IUDX APIs
+	/**  Defines the API endpoint */
 	private static final String PATH_PUBLISH = "/publish";
 	
 	// IUDX APIs ver. 1.0.0
 	private static final String PATH_PUBLISH_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_PUBLISH;
 	
+	/**
+	 * This method is used to setup and start the Vert.x server. It uses the
+	 * available processors (n) to create (n*2) workers and also gets the available
+	 * URLs from the URL class.
+	 * 
+	 * @param args Unused.
+	 * @return Nothing.
+	 * @exception Exception On setup or start error.
+	 * @see Exception
+	 */
+
 	public static void main(String[] args) throws Exception {
+		/**  Defines the number of processors available in the server */
 		int procs = Runtime.getRuntime().availableProcessors();
 		vertx = Vertx.vertx();
 		vertx.exceptionHandler(err -> {
@@ -92,15 +125,28 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 						System.out.println("Unable to start IUDX Vert.x API Server " + event.cause());
 					}
 				});
+		
 		broker_url = URLs.getBrokerUrl();
 		broker_port = URLs.getBrokerPort();
 		broker_vhost = URLs.getBrokerVhost();
 		broker_username = URLs.getBrokerUsername();
 		broker_password = URLs.getBrokerPassword();
 	}
-
+	
+	/**
+	 * This method is used to setup certificates for enabling HTTPs in Vert.x
+	 * server. It uses the provided .jks (Java Key Store) certificate in the path
+	 * and the password to enable SSL/TLS over HTTP in the desired port.
+	 * 
+	 * @param Nothing.
+	 * @return Nothing.
+	 * @exception Exception On start error.
+	 * @see Exception
+	 */
+	
 	@Override
 	public void start() throws Exception {
+		/**  Defines the port at which the apiserver should run */
 		int port = 8443;
 		server = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
 				.setKeyStoreOptions(new JksOptions().setPath("my-keystore.jks").setPassword("password")));
@@ -125,6 +171,15 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		
 		
 	}
+	
+	/**
+	 * This method is used to handle the client requests and map it to the
+	 * corresponding APIs using a switch case.
+	 * 
+	 * @param HttpServerRequest event This is the handle for the incoming request
+	 *                          from client.
+	 * @return Nothing.
+	 */
 
 	@Override
 	public void handle(HttpServerRequest event) {
@@ -134,6 +189,16 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			break;
 		}
 	}
+	
+	/**
+	 * This method is the implementation of Publish API, which handles the
+	 * publication request by clients.
+	 * 
+	 * @param HttpServerRequest event This is the handle for the incoming request
+	 *                          from client.
+	 * @return HttpServerResponse resp This sends the appropriate response for the
+	 *         incoming request.
+	 */
 
 	private void publish(HttpServerRequest request) {
 		
@@ -173,6 +238,20 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			resp.setStatusCode(200).end();
 		}
 	}
+
+	/**
+	 * This method is used to create a connection pool of RabbitMQ clients.
+	 * 
+	 * @param String connection_pool_id This is the key for the ConcurrentHashMap.
+	 *               The id is used to map the created connection to a
+	 *               RabbitMQClient.
+	 * @param String username This is the username to be used for the request to
+	 *               RabbitMQ.
+	 * @param String password This is the the password to be used for the request to
+	 *               RabbitMQ
+	 * @return Future<RabbitMQClient> create_broker_client This returns a Future
+	 *         which represents the result of an asynchronous task.
+	 */
 
 	public Future<RabbitMQClient> getRabbitMQClient(String connection_pool_id, String username, String password) {
 
