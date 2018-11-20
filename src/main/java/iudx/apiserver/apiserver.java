@@ -47,35 +47,52 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 
 	public static Vertx vertx;
 	private HttpServer server;
-	
+	/** This handles the HTTP response for all API requests */
 	private HttpServerResponse resp;
+	/** Handles the ID header in the HTTP Publish API request */
 	private String requested_id;
+	/** Handles the apikey header in the HTTP Publish API request */
 	private String requested_apikey;
+	/** Handles the to header in the HTTP Publish API request */
 	private String to;
+	/** Handles the subject header in the HTTP Publish API request */
 	private String subject;
+	/** Handles the message-type header in the HTTP Publish API request */
 	private String message_type;
+	/** Handles the Vert.x RabbitMQ client HashMap ID */
 	private String connection_pool_id;	
 	private JsonObject message;
-	
+	/** Handles the Vert.x RabbitMQ client connections in a ConcurrentHashMap with a connection pool ID as key */
 	Map<String, RabbitMQClient> rabbitpool = new ConcurrentHashMap<String, RabbitMQClient>();
+	/**  A RabbitMQClient Future handler to notify the caller about the status of client connection */
 	Future<RabbitMQClient> broker_client;
+	/**  A RabbitMQClient Future handler to notify the caller about the status of client connection */
 	Future<RabbitMQClient> create_broker_client;
+	/**  A RabbitMQClient configuration handler to modify connection parameters */
 	RabbitMQOptions broker_config;
+	/**  A RabbitMQ client to use the AMQP connection to interact with RabbitMQ */
 	RabbitMQClient client;
-	
+	/**  Handles the URL at which RabbitMQ server is running */
 	public static String broker_url;
+	/**  Handles the username to be used to connect with RabbitMQ server */
 	public static String broker_username;
+	/**  Handles the password to be used to connect with RabbitMQ server */
 	public static String broker_password;
+	/**  Handles the port to be used to connect with RabbitMQ server */
 	public static int broker_port;
+	/**  Handles the virtual host to be used to connect with RabbitMQ server */
 	public static String broker_vhost;
 	
 	// IUDX Base Path
+	/**  Defines the API server base path */
 	private static final String PATH_BASE = "/api/";
 	
 	// IUDX API version
+	/**  Defines the version of API */
 	private static final String PATH_VERSION_1_0_0 = "1.0.0";
 	
 	// IUDX APIs
+	/**  Defines the API endpoint */
 	private static final String PATH_PUBLISH = "/publish";
 	
 	// IUDX APIs ver. 1.0.0
@@ -93,6 +110,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 */
 
 	public static void main(String[] args) throws Exception {
+		/**  Defines the number of processors available in the server */
 		int procs = Runtime.getRuntime().availableProcessors();
 		vertx = Vertx.vertx();
 		vertx.exceptionHandler(err -> {
@@ -107,6 +125,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 						System.out.println("Unable to start IUDX Vert.x API Server " + event.cause());
 					}
 				});
+		
 		broker_url = URLs.getBrokerUrl();
 		broker_port = URLs.getBrokerPort();
 		broker_vhost = URLs.getBrokerVhost();
@@ -127,6 +146,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	
 	@Override
 	public void start() throws Exception {
+		/**  Defines the port at which the apiserver should run */
 		int port = 8443;
 		server = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
 				.setKeyStoreOptions(new JksOptions().setPath("my-keystore.jks").setPassword("password")));
