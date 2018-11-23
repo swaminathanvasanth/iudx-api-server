@@ -15,8 +15,20 @@ limitations under the License.
 
 package iudx.apiserver;
 
+import java.io.UnsupportedEncodingException;
+import java.security.MessageDigest;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.commons.lang3.RandomStringUtils;
+
+import com.julienviet.pgclient.PgClient;
+import com.julienviet.pgclient.PgIterator;
+import com.julienviet.pgclient.PgPool;
+import com.julienviet.pgclient.PgPoolOptions;
+import com.julienviet.pgclient.Row;
+import com.julienviet.pgclient.Tuple;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.DeploymentOptions;
@@ -94,9 +106,30 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	// IUDX APIs
 	/**  Defines the API endpoint */
 	private static final String PATH_PUBLISH = "/publish";
+	private static final String PATH_REGISTER = "/register";
+	
 	
 	// IUDX APIs ver. 1.0.0
 	private static final String PATH_PUBLISH_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_PUBLISH;
+	private static final String PATH_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER;
+	
+	private PgPool database_client;
+	private Tuple row;
+	private PgIterator<Row> resultSet;
+	private static final String PASSWORDCHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-";
+	private String apikey;
+	private String apikey_hash;
+	private byte[] hash;
+	private MessageDigest digest;
+	private boolean initiated_digest = false;
+	private PgPoolOptions options;
+	private String requested_entity;
+	private String registration_entity_id;
+	Future<RabbitMQClient> init_connection;
+	Future<RabbitMQClient>  completed_exchange_entry_creation;
+	Future<RabbitMQClient>  completed_queue_entry_creation;
+	Future<String> entity_verification;
+	boolean entity_already_exists;
 	
 	/**
 	 * This method is used to setup and start the Vert.x server. It uses the
@@ -157,6 +190,15 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			HttpHeaders.createOptimized(
 					java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now()));
 		});
+		
+		options = new PgPoolOptions();
+		options.setDatabase(URLs.psql_database_name);
+		options.setHost(URLs.psql_database_url); 
+		options.setPort(URLs.psql_database_port);
+		options.setUsername(URLs.psql_database_username);
+		options.setPassword(URLs.psql_database_password);
+		options.setCachePreparedStatements(true);
+		options.setMaxSize(5);
 	}
 	
 	@Override
@@ -187,8 +229,340 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		case PATH_PUBLISH_version_1_0_0:
 			publish(event);
 			break;
+		case PATH_REGISTRATION_version_1_0_0:
+			register(event);
+			break;
 		}
 	}
+	
+
+	private void register(HttpServerRequest req) {
+
+		resp = req.response();
+		database_client = PgClient.pool(vertx, options);
+		requested_id = req.getHeader("id");
+
+		// Check if ID is owner
+		if (requested_id.contains("/")) {
+			resp.setStatusCode(401).end();
+			return;
+		} else {
+			requested_apikey = req.getHeader("apikey");
+			requested_entity = req.getHeader("entity");
+			connection_pool_id = requested_id + requested_apikey;
+			registration_entity_id = requested_id + "/" + requested_entity;
+
+			// Check if ID already exists
+			entity_already_exists = false;
+			entity_verification = verifyentity(registration_entity_id);
+
+			entity_verification.setHandler(entity_verification_handler -> {
+
+				if (entity_verification_handler.succeeded()) {
+					if (entity_already_exists) {
+						message = new JsonObject();
+						message.put("conflict", "entity ID already used");
+						resp.setStatusCode(409).end(message.toString());
+						return;
+					} else {
+						database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
+								database_response -> {
+									if (database_response.succeeded()) {
+										resultSet = database_response.result().iterator();
+										if (!resultSet.hasNext()) {
+											resp.setStatusCode(404).end();
+											return;
+										}
+
+										row = resultSet.next();
+										generate_hash(requested_apikey);
+
+										// Check the hash of owner with the hash in DB
+										// Check if blocked is false
+
+										if (row.getString(1).equalsIgnoreCase(apikey_hash)
+												&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
+											generate_apikey();
+											if (!rabbitpool.containsKey(connection_pool_id)) {
+												init_connection = getRabbitMQClient(connection_pool_id, requested_id,
+														requested_apikey);
+												init_connection.setHandler(init_connection_handler -> {
+													if (init_connection_handler.succeeded()) {
+														client = rabbitpool.get(connection_pool_id);
+														completed_exchange_entry_creation = createExchangeEntries();
+														completed_queue_entry_creation = createQueueEntries();
+														completed_exchange_entry_creation.setHandler(
+																completed_exchange_entry_creation_handler -> {
+																	if (completed_exchange_entry_creation_handler
+																			.succeeded()) {
+																		completed_queue_entry_creation.setHandler(
+																				completed_queue_entry_creation_handler -> {
+																					if (completed_queue_entry_creation_handler
+																							.succeeded()) {
+																						Future<RabbitMQClient> completed_binding = createBindings();
+																						completed_binding.setHandler(
+																								completed_binding_handler -> {
+																									if (completed_binding_handler
+																											.succeeded()) {
+																										database_client
+																												.preparedQuery(
+																														"INSERT INTO USERS VALUES ('"
+																																+ registration_entity_id
+																																+ "','"
+																																+ apikey_hash
+																																+ "',null,'"
+																																+ hash
+																																+ "','f','t')",
+																														write_res -> {
+																															if (write_res
+																																	.succeeded()) {
+																																message = new JsonObject();
+																																message.put(
+																																		"id",
+																																		registration_entity_id);
+																																message.put(
+																																		"apikey",
+																																		apikey);
+																																resp.setStatusCode(
+																																		200)
+																																		.end(message
+																																				.toString());
+																																return;
+																															}
+																														});
+																									}
+																								});
+
+																					}
+
+																				});
+																	}
+																});
+													}
+												});
+
+											} else {
+												client = rabbitpool.get(connection_pool_id);
+												completed_exchange_entry_creation = createExchangeEntries();
+												completed_queue_entry_creation = createQueueEntries();
+
+												completed_exchange_entry_creation
+														.setHandler(completed_exchange_entry_creation_handler -> {
+															if (completed_exchange_entry_creation_handler.succeeded()) {
+																completed_queue_entry_creation.setHandler(
+																		completed_queue_entry_creation_handler -> {
+																			if (completed_queue_entry_creation_handler
+																					.succeeded()) {
+																				Future<RabbitMQClient> completed_binding = createBindings();
+																				completed_binding.setHandler(
+																						completed_binding_handler -> {
+																							if (completed_binding_handler
+																									.succeeded()) {
+																								database_client
+																										.preparedQuery(
+																												"INSERT INTO USERS VALUES ('"
+																														+ registration_entity_id
+																														+ "',' "
+																														+ apikey_hash
+																														+ "',null,'"
+																														+ hash
+																														+ "','f','t')",
+																												write_res -> {
+																													if (write_res
+																															.succeeded()) {
+																														message.put(
+																																"id",
+																																registration_entity_id);
+																														message.put(
+																																"apikey",
+																																apikey);
+																														resp.setStatusCode(
+																																200)
+																																.end(message
+																																		.toString());
+																														return;
+																													}
+																												});
+																							}
+																						});
+																			}
+																		});
+															}
+														});
+											}
+										}
+									} else {
+										resp.setStatusCode(404).end();
+										return;
+									}
+								});
+
+					}
+
+				}
+			});
+		}
+	}
+	
+	private Future<String> verifyentity(String registration_entity_id) {
+		Future<String> verifyentity = Future.future();
+		database_client.preparedQuery("SELECT * FROM users WHERE id = '"+registration_entity_id+"'", database_response -> {
+			if(database_response.succeeded()) {
+				resultSet = database_response.result().iterator();
+				if (!resultSet.hasNext()) {
+					entity_already_exists = false;
+				} else {
+					row = resultSet.next();
+					if (row.getString(0).equalsIgnoreCase(registration_entity_id) && row.getBoolean(4).toString().equalsIgnoreCase("false")) {
+						entity_already_exists = true;
+					}
+				}
+			}
+			verifyentity.complete();
+		});
+		return verifyentity;		
+	}
+
+	private void generate_apikey() {
+		apikey = RandomStringUtils.random(32, 0, PASSWORDCHARS.length(), true, true, PASSWORDCHARS.toCharArray());
+
+		try {
+			if(!initiated_digest) {
+			digest = MessageDigest.getInstance("SHA-256");
+			initiated_digest = true;}
+			digest.update(apikey.getBytes("UTF-8"));
+			hash = digest.digest();
+			convert_byte_to_string(hash);
+			
+		} catch (Exception e) {
+			System.out.println("UnsupportedEncodingException");
+		}
+	}
+
+	private byte[] generate_hash(String key) {
+		
+		try {
+			if(!initiated_digest) {
+			digest = MessageDigest.getInstance("SHA-256");
+			initiated_digest = true;}
+			digest.update(key.getBytes("UTF-8"));
+			hash = digest.digest();
+			convert_byte_to_string(hash);
+		} catch (Exception e) {
+			System.out.println("UnsupportedEncodingException");
+		}
+		return hash;
+	}
+
+
+	private void convert_byte_to_string(byte[] hash) {
+		StringBuilder sb = new StringBuilder();
+        for(int i=0; i< hash.length ;i++)
+        {
+            sb.append(Integer.toString((hash[i] & 0xff) + 0x100, 16).substring(1));
+        }
+        //Get complete hashed password in hex format
+        apikey_hash = sb.toString();
+ 	}
+
+
+	private Future<RabbitMQClient> createExchangeEntries() {
+		Future<RabbitMQClient> createExchangeEntries = Future.future();
+		client.exchangeDeclare(registration_entity_id + ".private", "topic", true, false, private_exchange_handler -> {
+			if (private_exchange_handler.succeeded()) {
+				client.exchangeDeclare(registration_entity_id + ".public", "topic", true, false, public_exchange_handler -> {
+					if (public_exchange_handler.succeeded()) {
+						client.exchangeDeclare(registration_entity_id + ".protected", "topic", true, false, protected_exchange_handler -> {
+							if (protected_exchange_handler.succeeded()) {
+								client.exchangeDeclare(registration_entity_id + ".diagnostics", "topic", true, false, diagnostics_exchange_handler -> {
+									if (diagnostics_exchange_handler.succeeded()) {
+										client.exchangeDeclare(registration_entity_id + ".notification", "topic", true, false, notification_exchange_handler -> {
+											if (notification_exchange_handler.succeeded()) {
+												client.exchangeDeclare(registration_entity_id + ".publish", "topic", true, false, publish_exchange_handler -> {
+													if (publish_exchange_handler.succeeded()) {
+														createExchangeEntries.complete();
+																											}
+																										});
+																					}
+																				});
+																	}
+																});
+													}
+												});
+									}
+								});
+					}
+				});
+		return createExchangeEntries;
+	}
+
+	private Future<RabbitMQClient> createQueueEntries() {
+		Future<RabbitMQClient> createQueueEntries = Future.future();
+		client.queueDeclare(registration_entity_id, true, false, false, queue_handler -> {
+			if(queue_handler.succeeded()) {
+				client.queueDeclare(registration_entity_id + ".private", true, false, false, private_queue_handler -> {
+					if(private_queue_handler.succeeded()) {
+						client.queueDeclare(registration_entity_id + ".priority", true, false, false, priority_queue_handler -> {
+							if(priority_queue_handler.succeeded()) {
+								client.queueDeclare(registration_entity_id + ".command", true, false, false, command_queue_handler -> {
+									if(private_queue_handler.succeeded()) {
+										client.queueDeclare(registration_entity_id + ".notification", true, false, false, notification_queue_handler -> {
+											if(notification_queue_handler.succeeded()) {
+												createQueueEntries.complete();
+												
+																			}
+																		});
+															}
+														});
+											}
+										});
+							}
+						});
+			}
+		});
+		return createQueueEntries;
+	}
+
+	private Future<RabbitMQClient> createBindings() {
+		Future<RabbitMQClient> createBindings = Future.future();
+		client.queueBind(registration_entity_id + ".notification",
+				registration_entity_id + ".notification", "#", queue_bind_handler -> {
+			if(queue_bind_handler.succeeded()) {
+				client.queueBind(registration_entity_id + ".private",
+						registration_entity_id + ".private", "#", private_queue_bind_handler -> {
+					if(private_queue_bind_handler.succeeded()) {
+						client.queueBind("database", registration_entity_id + ".private", "#", database_private_bind_handler -> {
+							if(database_private_bind_handler.succeeded()) {
+								client.queueBind("database", registration_entity_id + ".public", "#", database_public_bind_handler -> {
+									if(database_public_bind_handler.succeeded()) {
+										client.queueBind("database", registration_entity_id + ".protected", "#", database_protected_bind_handler -> {
+											if(database_protected_bind_handler.succeeded()) {
+												client.queueBind("database", registration_entity_id + ".notification", "#", database_notification_bind_handler -> {
+													if(database_notification_bind_handler.succeeded()) {
+														client.queueBind("database", registration_entity_id + ".publish", "#", database_publish_bind_handler -> {
+															if(database_publish_bind_handler.succeeded()) {
+																client.queueBind("database", registration_entity_id + ".diagnostics", "#", database_diagnostics_bind_handler -> {
+																	if(database_diagnostics_bind_handler.succeeded()) {
+																		createBindings.complete();
+																																					}
+																																				});
+																															}
+																														});
+																									}
+																								});
+																					}
+																				});
+																	}
+																});
+													}
+												});
+									}
+								});
+					}
+				});
+		return createBindings;
+	}
+	
 	
 	/**
 	 * This method is the implementation of Publish API, which handles the
