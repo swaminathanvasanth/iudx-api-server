@@ -59,9 +59,11 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 
 	public static Vertx vertx;
 	private HttpServer server;
+	
 	/** This handles the HTTP response for all API requests */
 	private HttpServerResponse resp;
 	/** Handles the ID header in the HTTP Publish API request */
+	
 	private String requested_id;
 	/** Handles the apikey header in the HTTP Publish API request */
 	private String requested_apikey;
@@ -71,15 +73,38 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private String subject;
 	/** Handles the message-type header in the HTTP Publish API request */
 	private String message_type;
+
+	/** Handles the id header in the HTTP Registration API request */
+	private String requested_entity;
+	/** Handles the entity header in the HTTP Registration API request */
+	private String registration_entity_id;
+	/** A boolean variable (FLAG) used for handling the ID availability */
+	boolean entity_already_exists;
+	
 	/** Handles the Vert.x RabbitMQ client HashMap ID */
 	private String connection_pool_id;	
+	
+	/**  Handles the message object for HTTP request and response */
 	private JsonObject message;
+	
+	// Used in publish API
 	/** Handles the Vert.x RabbitMQ client connections in a ConcurrentHashMap with a connection pool ID as key */
 	Map<String, RabbitMQClient> rabbitpool = new ConcurrentHashMap<String, RabbitMQClient>();
 	/**  A RabbitMQClient Future handler to notify the caller about the status of client connection */
 	Future<RabbitMQClient> broker_client;
 	/**  A RabbitMQClient Future handler to notify the caller about the status of client connection */
 	Future<RabbitMQClient> create_broker_client;
+	// Used in registration API
+	/**  A RabbitMQClient Future handler to notify the caller about the status of client connection */
+	Future<RabbitMQClient> init_connection;
+	/**  A RabbitMQClient Future handler to notify the caller about the status of the requested exchange creation */
+	Future<RabbitMQClient>  completed_exchange_entry_creation;
+	/**  A RabbitMQClient Future handler to notify the caller about the status of the requested queue creation */
+	Future<RabbitMQClient>  completed_queue_entry_creation;
+	/**  A RabbitMQClient Future handler to notify the caller about the status of entity verification */
+	Future<String> entity_verification;
+	
+	// Used in publish API
 	/**  A RabbitMQClient configuration handler to modify connection parameters */
 	RabbitMQOptions broker_config;
 	/**  A RabbitMQ client to use the AMQP connection to interact with RabbitMQ */
@@ -104,32 +129,42 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_VERSION_1_0_0 = "1.0.0";
 	
 	// IUDX APIs
-	/**  Defines the API endpoint */
+	/**  Defines the Publish API endpoint */
 	private static final String PATH_PUBLISH = "/publish";
+	/**  Defines the registration API endpoint */
 	private static final String PATH_REGISTER = "/register";
 	
 	
 	// IUDX APIs ver. 1.0.0
+	/**  Defines the Publish API (1.0.0) endpoint */
 	private static final String PATH_PUBLISH_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_PUBLISH;
+	/**  Defines the Registration API (1.0.0) endpoint */
 	private static final String PATH_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER;
 	
+	// Used in registration API to connect with PostgresQL
+	/**  A PostgresQL client pool to handle database connection */
 	private PgPool database_client;
+	/**  A PostgresQL handle for reading rows from the result set */
 	private Tuple row;
+	/**  A PostgresQL handle for iterating the result set of the executed Query */
 	private PgIterator<Row> resultSet;
-	private static final String PASSWORDCHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-";
-	private String apikey;
-	private String apikey_hash;
-	private byte[] hash;
-	private MessageDigest digest;
-	private boolean initiated_digest = false;
+	/** A PostgresQL PgPoolOptions handle for configuring the connection parameters */
 	private PgPoolOptions options;
-	private String requested_entity;
-	private String registration_entity_id;
-	Future<RabbitMQClient> init_connection;
-	Future<RabbitMQClient>  completed_exchange_entry_creation;
-	Future<RabbitMQClient>  completed_queue_entry_creation;
-	Future<String> entity_verification;
-	boolean entity_already_exists;
+	
+	// Used in registration API for apikey generation
+	/**  Characters to be used by APIKey generator while generating apikey */
+	private static final String PASSWORDCHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-";
+	/** Handles the generated apikey for the HTTP Registration API request */
+	private String apikey;
+	/** Handles the generated apikey hash for the HTTP Registration API request */
+	private String apikey_hash;
+	/** Handles the generated apikey hash (in bytes) for the HTTP Registration API request */
+	private byte[] hash;
+	/** A MessageDigest object used for creating the apikey hash */
+	private MessageDigest digest;
+	/** A boolean variable (FLAG) used for handling the state of the MessageDigest object */
+	private boolean initiated_digest = false;
+
 	
 	/**
 	 * This method is used to setup and start the Vert.x server. It uses the
@@ -218,7 +253,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 * This method is used to handle the client requests and map it to the
 	 * corresponding APIs using a switch case.
 	 * 
-	 * @param HttpServerRequest event This is the handle for the incoming request
+	 * @param HttpServerRequest event - This is the handle for the incoming request
 	 *                          from client.
 	 * @return Nothing.
 	 */
@@ -235,6 +270,15 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		}
 	}
 	
+	/**
+	 * This method is the implementation of entity Registration API, which handles
+	 * the new device or application registration requests by owners.
+	 * 
+	 * @param HttpServerRequest req - This is the handle for the incoming request
+	 *                          from client.
+	 * @return HttpServerResponse resp - This sends the appropriate response for the
+	 *         incoming request.
+	 */
 
 	private void register(HttpServerRequest req) {
 
@@ -404,6 +448,16 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		}
 	}
 	
+	/**
+	 * This method is used to verify if the requested registration entity is already
+	 * registered.
+	 * 
+	 * @param String registration_entity_id - This is the handle for the incoming
+	 *               request header (entity) from client.
+	 * @return Future<String> verifyentity - This is a callable Future which notifies
+	 *         on completion.
+	 */
+	
 	private Future<String> verifyentity(String registration_entity_id) {
 		Future<String> verifyentity = Future.future();
 		database_client.preparedQuery("SELECT * FROM users WHERE id = '"+registration_entity_id+"'", database_response -> {
@@ -423,6 +477,15 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return verifyentity;		
 	}
 
+	/**
+	 * This method is used to generate apikey using the allowed characters. Once
+	 * apikey is created, a hash of it is also created. The entries are stored in
+	 * the variables apikey, hash (as bytes) and apikey_hash (as String).
+	 * 
+	 * @param Nothing.
+	 * @return void Nothing.
+	 */
+
 	private void generate_apikey() {
 		apikey = RandomStringUtils.random(32, 0, PASSWORDCHARS.length(), true, true, PASSWORDCHARS.toCharArray());
 
@@ -438,6 +501,15 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			System.out.println("UnsupportedEncodingException");
 		}
 	}
+
+	/**
+	 * This method is used to generate apikey hash from the received apikey. This is
+	 * used for validating the user. The entry is stored in the variable hash (as
+	 * bytes) and in apikey_hash (as String).
+	 * 
+	 * @param String key - The key which needs to be converted to a hash.
+	 * @return byte[] hash - The hash which can now be compared in the database.
+	 */
 
 	private byte[] generate_hash(String key) {
 		
@@ -455,6 +527,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	}
 
 
+	/**
+	 * This method is used to convert byte (apikey) to String (apikey_hash).
+	 * 
+	 * @param byte[] hash - The hash (in bytes) which needs to be converted to a
+	 *        String.
+	 * @return void Nothing.
+	 */
+	
 	private void convert_byte_to_string(byte[] hash) {
 		StringBuilder sb = new StringBuilder();
         for(int i=0; i< hash.length ;i++)
@@ -465,7 +545,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
         apikey_hash = sb.toString();
  	}
 
-
+	/**
+	 * This method is used to create exchanges in RabbitMQ..
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> createExchangeEntries - This is a callable
+	 *         Future which notifies the caller on completion of exchange creation.
+	 */
+	
 	private Future<RabbitMQClient> createExchangeEntries() {
 		Future<RabbitMQClient> createExchangeEntries = Future.future();
 		client.exchangeDeclare(registration_entity_id + ".private", "topic", true, false, private_exchange_handler -> {
@@ -496,6 +583,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createExchangeEntries;
 	}
 
+	/**
+	 * This method is used to create queues in RabbitMQ..
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> createQueueEntries - This is a callable Future
+	 *         which notifies the caller on completion of queue creation.
+	 */
+	
 	private Future<RabbitMQClient> createQueueEntries() {
 		Future<RabbitMQClient> createQueueEntries = Future.future();
 		client.queueDeclare(registration_entity_id, true, false, false, queue_handler -> {
@@ -522,6 +617,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		});
 		return createQueueEntries;
 	}
+
+	/**
+	 * This method is used to create bindings in RabbitMQ..
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> createBindings - This is a callable Future which
+	 *         notifies the caller on completion of bindings.
+	 */
 
 	private Future<RabbitMQClient> createBindings() {
 		Future<RabbitMQClient> createBindings = Future.future();
@@ -568,9 +671,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 * This method is the implementation of Publish API, which handles the
 	 * publication request by clients.
 	 * 
-	 * @param HttpServerRequest event This is the handle for the incoming request
+	 * @param HttpServerRequest event - This is the handle for the incoming request
 	 *                          from client.
-	 * @return HttpServerResponse resp This sends the appropriate response for the
+	 * @return HttpServerResponse resp - This sends the appropriate response for the
 	 *         incoming request.
 	 */
 
@@ -616,14 +719,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	/**
 	 * This method is used to create a connection pool of RabbitMQ clients.
 	 * 
-	 * @param String connection_pool_id This is the key for the ConcurrentHashMap.
+	 * @param String connection_pool_id - This is the key for the ConcurrentHashMap.
 	 *               The id is used to map the created connection to a
 	 *               RabbitMQClient.
-	 * @param String username This is the username to be used for the request to
+	 * @param String username - This is the username to be used for the request to
 	 *               RabbitMQ.
-	 * @param String password This is the the password to be used for the request to
+	 * @param String password - This is the the password to be used for the request to
 	 *               RabbitMQ
-	 * @return Future<RabbitMQClient> create_broker_client This returns a Future
+	 * @return Future<RabbitMQClient> create_broker_client - This returns a Future
 	 *         which represents the result of an asynchronous task.
 	 */
 
