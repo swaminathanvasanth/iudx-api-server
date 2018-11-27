@@ -133,6 +133,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_PUBLISH = "/publish";
 	/**  Defines the registration API endpoint */
 	private static final String PATH_REGISTER = "/register";
+	/**  Defines the owner registration API endpoint */
 	private static final String PATH_REGISTER_OWNER = "/register-owner";
 	
 	
@@ -141,6 +142,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_PUBLISH_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_PUBLISH;
 	/**  Defines the Registration API (1.0.0) endpoint */
 	private static final String PATH_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER;
+	/**  Defines the Owner Registration API (1.0.0) endpoint */
 	private static final String PATH_OWNER_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER_OWNER;
 	
 	// Used in registration API to connect with PostgresQL
@@ -274,6 +276,17 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			break;
 		}
 	}
+	
+	
+	/**
+	 * This method is the implementation of owner Registration API, which handles
+	 * new owner registration requests by IUDX admin.
+	 * 
+	 * @param HttpServerRequest req - This is the handle for the incoming request
+	 *                          from client.
+	 * @return HttpServerResponse resp - This sends the appropriate response for the
+	 *         incoming request.
+	 */
 	
 	private void register_owner(HttpServerRequest req) {
 		resp = req.response();
@@ -705,6 +718,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
         apikey_hash = sb.toString();
  	}
 	
+	/**
+	 * This method is used to create exchanges in RabbitMQ for Owners.
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> createOwnerExchangeEntries - This is a callable
+	 *         Future which notifies the caller on completion of exchange creation.
+	 */
+	
 	private Future<RabbitMQClient> createOwnerExchangeEntries() {
 		Future<RabbitMQClient> createOwnerExchangeEntries = Future.future();
 		client.exchangeDeclare(requested_entity + ".notification", "topic", true, false,
@@ -716,6 +737,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createOwnerExchangeEntries;
 	}
 
+	/**
+	 * This method is used to create queues in RabbitMQ for Owners.
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> createOwnerQueueEntries - This is a callable Future
+	 *         which notifies the caller on completion of queue creation.
+	 */
+	
 	private Future<RabbitMQClient> createOwnerQueueEntries() {
 		Future<RabbitMQClient> createOwnerQueueEntries = Future.future();
 		client.queueDeclare(requested_entity + ".notification", true, false, false, notification_queue_handler -> {
@@ -727,6 +756,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createOwnerQueueEntries;
 	}
 
+	/**
+	 * This method is used to create bindings in RabbitMQ for Owners.
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> createOwnerBindings - This is a callable Future which
+	 *         notifies the caller on completion of bindings.
+	 */
+	
 	private Future<RabbitMQClient> createOwnerBindings() {
 		Future<RabbitMQClient> createOwnerBindings = Future.future();
 		client.queueBind(requested_entity + ".notification", requested_entity + ".notification", "#",
@@ -744,7 +781,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	}	
 	
 	/**
-	 * This method is used to create exchanges in RabbitMQ..
+	 * This method is used to create exchanges in RabbitMQ for entities.
 	 * 
 	 * @param Nothing.
 	 * @return Future<RabbitMQClient> createExchangeEntries - This is a callable
@@ -782,7 +819,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	}
 
 	/**
-	 * This method is used to create queues in RabbitMQ..
+	 * This method is used to create queues in RabbitMQ for entities.
 	 * 
 	 * @param Nothing.
 	 * @return Future<RabbitMQClient> createQueueEntries - This is a callable Future
@@ -817,7 +854,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	}
 
 	/**
-	 * This method is used to create bindings in RabbitMQ..
+	 * This method is used to create bindings in RabbitMQ for entities.
 	 * 
 	 * @param Nothing.
 	 * @return Future<RabbitMQClient> createBindings - This is a callable Future which
