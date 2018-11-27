@@ -74,9 +74,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	/** Handles the message-type header in the HTTP Publish API request */
 	private String message_type;
 
-	/** Handles the id header in the HTTP Registration API request */
+	/** Handles the owner / entity header in the HTTP Registration API request */
 	private String requested_entity;
-	/** Handles the entity header in the HTTP Registration API request */
+	/** Handles the updated entity name from the HTTP Registration API request */
 	private String registration_entity_id;
 	/** A boolean variable (FLAG) used for handling the ID availability */
 	boolean entity_already_exists;
@@ -133,6 +133,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_PUBLISH = "/publish";
 	/**  Defines the registration API endpoint */
 	private static final String PATH_REGISTER = "/register";
+	private static final String PATH_REGISTER_OWNER = "/register-owner";
 	
 	
 	// IUDX APIs ver. 1.0.0
@@ -140,6 +141,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_PUBLISH_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_PUBLISH;
 	/**  Defines the Registration API (1.0.0) endpoint */
 	private static final String PATH_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER;
+	private static final String PATH_OWNER_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER_OWNER;
 	
 	// Used in registration API to connect with PostgresQL
 	/**  A PostgresQL client pool to handle database connection */
@@ -261,12 +263,170 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	@Override
 	public void handle(HttpServerRequest event) {
 		switch (event.path()) {
+		case PATH_OWNER_REGISTRATION_version_1_0_0:
+			register_owner(event);
+			break;
 		case PATH_PUBLISH_version_1_0_0:
 			publish(event);
 			break;
 		case PATH_REGISTRATION_version_1_0_0:
 			register(event);
 			break;
+		}
+	}
+	
+	private void register_owner(HttpServerRequest req) {
+		resp = req.response();
+		database_client = PgClient.pool(vertx, options);
+		requested_id = req.getHeader("id");
+		requested_apikey = req.getHeader("apikey");
+		requested_entity = req.getHeader("owner");
+
+		// Check if owner has a '/' in ID
+		if (requested_entity.contains("/")) {
+			resp.setStatusCode(401).end();
+			return;
+		} else {
+			connection_pool_id = requested_id + requested_apikey;
+			// Check if ID already exists
+			entity_already_exists = false;
+			entity_verification = verifyentity(requested_entity);
+			entity_verification.setHandler(entity_verification_handler -> {
+				if (entity_verification_handler.succeeded()) {
+					if (entity_already_exists) {
+						message = new JsonObject();
+						message.put("conflict", "Owner ID already used");
+						resp.setStatusCode(409).end(message.toString());
+						return;
+					} else {
+						database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
+								database_response -> {
+									if (database_response.succeeded()) {
+										resultSet = database_response.result().iterator();
+										if (!resultSet.hasNext()) {
+											resp.setStatusCode(404).end();
+											return;
+										}
+									}
+									row = resultSet.next();
+									generate_hash(requested_apikey);
+
+									// Check the hash of admin with the hash in DB
+
+									if (row.getString(1).equalsIgnoreCase(apikey_hash)
+											&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
+										generate_apikey();
+										if (!rabbitpool.containsKey(connection_pool_id)) {
+											init_connection = getRabbitMQClient(connection_pool_id, requested_id,
+													requested_apikey);
+											init_connection.setHandler(init_connection_handler -> {
+												if (init_connection_handler.succeeded()) {
+													client = rabbitpool.get(connection_pool_id);
+													completed_exchange_entry_creation = createOwnerExchangeEntries();
+													completed_queue_entry_creation = createOwnerQueueEntries();
+													completed_exchange_entry_creation
+															.setHandler(completed_exchange_entry_creation_handler -> {
+																if (completed_exchange_entry_creation_handler
+																		.succeeded()) {
+																	completed_queue_entry_creation.setHandler(
+																			completed_queue_entry_creation_handler -> {
+																				if (completed_queue_entry_creation_handler
+																						.succeeded()) {
+																					Future<RabbitMQClient> completed_binding = createOwnerBindings();
+																					completed_binding.setHandler(
+																							completed_binding_handler -> {
+																								if (completed_binding_handler
+																										.succeeded()) {
+																									database_client
+																											.preparedQuery(
+																													"INSERT INTO USERS VALUES ('"
+																															+ requested_entity
+																															+ "','"
+																															+ apikey_hash
+																															+ "',null,'"
+																															+ hash
+																															+ "','f','t')",
+																													write_res -> {
+																														if (write_res
+																																.succeeded()) {
+																															message = new JsonObject();
+																															message.put(
+																																	"id",
+																																	requested_entity);
+																															message.put(
+																																	"apikey",
+																																	apikey);
+																															resp.setStatusCode(
+																																	200)
+																																	.end(message
+																																			.toString());
+																															return;
+																														}
+																													});
+																								}
+																							});
+																				}
+																			});
+																}
+															});
+												}
+											});
+										} else {
+											client = rabbitpool.get(connection_pool_id);
+											completed_exchange_entry_creation = createOwnerExchangeEntries();
+											completed_queue_entry_creation = createOwnerQueueEntries();
+											completed_exchange_entry_creation
+													.setHandler(completed_exchange_entry_creation_handler -> {
+														if (completed_exchange_entry_creation_handler.succeeded()) {
+															completed_queue_entry_creation.setHandler(
+																	completed_queue_entry_creation_handler -> {
+																		if (completed_queue_entry_creation_handler
+																				.succeeded()) {
+																			Future<RabbitMQClient> completed_binding = createOwnerBindings();
+																			completed_binding.setHandler(
+																					completed_binding_handler -> {
+																						if (completed_binding_handler
+																								.succeeded()) {
+																							database_client
+																									.preparedQuery(
+																											"INSERT INTO USERS VALUES ('"
+																													+ requested_entity
+																													+ "',' "
+																													+ apikey_hash
+																													+ "',null,'"
+																													+ hash
+																													+ "','f','t')",
+																											write_res -> {
+																												if (write_res
+																														.succeeded()) {
+																													message.put(
+																															"id",
+																															requested_entity);
+																													message.put(
+																															"apikey",
+																															apikey);
+																													resp.setStatusCode(
+																															200)
+																															.end(message
+																																	.toString());
+																													return;
+																												}
+																											});
+																						}
+																					});
+																		}
+																	});
+														}
+													});
+										}
+									}
+								});
+					}
+				} else {
+					resp.setStatusCode(404).end();
+					return;
+				}
+			});
 		}
 	}
 	
@@ -544,7 +704,45 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
         //Get complete hashed password in hex format
         apikey_hash = sb.toString();
  	}
+	
+	private Future<RabbitMQClient> createOwnerExchangeEntries() {
+		Future<RabbitMQClient> createOwnerExchangeEntries = Future.future();
+		client.exchangeDeclare(requested_entity + ".notification", "topic", true, false,
+				notification_exchange_handler -> {
+					if (notification_exchange_handler.succeeded()) {
+						createOwnerExchangeEntries.complete();
+					}
+				});
+		return createOwnerExchangeEntries;
+	}
 
+	private Future<RabbitMQClient> createOwnerQueueEntries() {
+		Future<RabbitMQClient> createOwnerQueueEntries = Future.future();
+		client.queueDeclare(requested_entity + ".notification", true, false, false, notification_queue_handler -> {
+			if (notification_queue_handler.succeeded()) {
+				createOwnerQueueEntries.complete();
+
+			}
+		});
+		return createOwnerQueueEntries;
+	}
+
+	private Future<RabbitMQClient> createOwnerBindings() {
+		Future<RabbitMQClient> createOwnerBindings = Future.future();
+		client.queueBind(requested_entity + ".notification", requested_entity + ".notification", "#",
+				queue_bind_handler -> {
+					if (queue_bind_handler.succeeded()) {
+						client.queueBind("database", requested_entity + ".notification", "#",
+								database_notification_bind_handler -> {
+									if (database_notification_bind_handler.succeeded()) {
+										createOwnerBindings.complete();
+									}
+								});
+					}
+				});
+		return createOwnerBindings;
+	}	
+	
 	/**
 	 * This method is used to create exchanges in RabbitMQ..
 	 * 
