@@ -103,6 +103,10 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	Future<RabbitMQClient>  completed_queue_entry_creation;
 	/**  A RabbitMQClient Future handler to notify the caller about the status of entity verification */
 	Future<String> entity_verification;
+	/**  A RabbitMQClient Future handler to notify the caller about the status of the requested exchange deletion */
+	Future<RabbitMQClient>  completed_exchange_entry_deletion;
+	/**  A RabbitMQClient Future handler to notify the caller about the status of the requested queue deletion */
+	Future<RabbitMQClient>  completed_queue_entry_deletion;
 	
 	// Used in publish API
 	/**  A RabbitMQClient configuration handler to modify connection parameters */
@@ -266,8 +270,13 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	public void handle(HttpServerRequest event) {
 		switch (event.path()) {
 		case PATH_OWNER_REGISTRATION_version_1_0_0:
-			register_owner(event);
-			break;
+			if(event.method().toString().equalsIgnoreCase("POST")) {
+				register_owner(event);
+				break;
+			} else if(event.method().toString().equalsIgnoreCase("DELETE")) {
+				de_register_owner(event);
+				break;
+			}
 		case PATH_PUBLISH_version_1_0_0:
 			publish(event);
 			break;
@@ -441,6 +450,127 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 				}
 			});
 		}
+	}
+	
+	
+	private void de_register_owner(HttpServerRequest req) {
+
+		resp = req.response();
+		database_client = PgClient.pool(vertx, options);
+		requested_id = req.getHeader("id");
+		requested_apikey = req.getHeader("apikey");
+		requested_entity = req.getHeader("owner");
+
+		// Check if owner has a '/' in ID
+		if (requested_entity.contains("/")) {
+			resp.setStatusCode(401).end();
+			return;
+		} else {
+			connection_pool_id = requested_id + requested_apikey;
+			// Check if ID already exists
+			entity_already_exists = true;
+			entity_verification = verifyentity(requested_entity);
+			entity_verification.setHandler(entity_verification_handler -> {
+				if (entity_verification_handler.succeeded()) {
+					if (! entity_already_exists) {
+						message = new JsonObject();
+						message.put("failure", "Owner ID not found");
+						resp.setStatusCode(401).end(message.toString());
+						return;
+					} else {
+						database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
+								database_response -> {
+									if (database_response.succeeded()) {
+										resultSet = database_response.result().iterator();
+										if (!resultSet.hasNext()) {
+											resp.setStatusCode(404).end();
+											return;
+										}
+									}
+									row = resultSet.next();
+									generate_hash(requested_apikey);
+
+									// Check the hash of admin with the hash in DB
+
+									if (row.getString(1).equalsIgnoreCase(apikey_hash)
+											&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
+										if (!rabbitpool.containsKey(connection_pool_id)) {
+											init_connection = getRabbitMQClient(connection_pool_id, requested_id,
+													requested_apikey);
+											init_connection.setHandler(init_connection_handler -> {
+												if (init_connection_handler.succeeded()) {
+													client = rabbitpool.get(connection_pool_id);
+													completed_exchange_entry_deletion = deleteOwnerExchangeEntries();
+													completed_queue_entry_deletion = deleteOwnerQueueEntries();
+													completed_exchange_entry_deletion
+															.setHandler(completed_exchange_entry_deletion_handler -> {
+																if (completed_exchange_entry_deletion_handler
+																		.succeeded()) {
+																	completed_queue_entry_deletion.setHandler(
+																			completed_queue_entry_deletion_handler -> {
+																				if (completed_queue_entry_deletion_handler
+																						.succeeded()) {
+																					database_client
+																							.preparedQuery(
+																									"DELETE FROM USERS WHERE ID = '"
+																											+ requested_entity
+																											+ "'",
+																									delete_res -> {
+																										if (delete_res
+																												.succeeded()) {
+																											resp.setStatusCode(
+																													200)
+																													.end();
+																											return;
+																										}
+																									});
+																				}
+																			});
+																}
+															});
+												}
+											});
+										} else {
+											client = rabbitpool.get(connection_pool_id);
+											completed_exchange_entry_deletion = deleteOwnerExchangeEntries();
+											completed_queue_entry_deletion = deleteOwnerQueueEntries();
+											completed_exchange_entry_deletion
+													.setHandler(completed_exchange_entry_deletion_handler -> {
+														if (completed_exchange_entry_deletion_handler
+																.succeeded()) {
+															completed_queue_entry_deletion.setHandler(
+																	completed_queue_entry_deletion_handler -> {
+																		if (completed_queue_entry_deletion_handler
+																				.succeeded()) {
+																			database_client
+																					.preparedQuery(
+																							"DELETE FROM USERS WHERE ID = '"
+																									+ requested_entity
+																									+ "'",
+																							delete_res -> {
+																								if (delete_res
+																										.succeeded()) {
+																									resp.setStatusCode(
+																											200)
+																											.end();
+																									return;
+																								}
+																							});
+																		}
+																	});
+														}
+													});
+										}
+									}
+								});
+					}
+				} else {
+					resp.setStatusCode(404).end();
+					return;
+				}
+			});
+		}
+		
 	}
 	
 	/**
@@ -737,6 +867,16 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createOwnerExchangeEntries;
 	}
 
+	private Future<RabbitMQClient> deleteOwnerExchangeEntries() {
+		Future<RabbitMQClient> deleteOwnerExchangeEntries = Future.future();
+		client.exchangeDelete(requested_entity + ".notification", notification_exchange_handler -> {
+			if (notification_exchange_handler.succeeded()) {
+				deleteOwnerExchangeEntries.complete();
+			}
+		});
+		return deleteOwnerExchangeEntries;
+	}
+	
 	/**
 	 * This method is used to create queues in RabbitMQ for Owners.
 	 * 
@@ -756,6 +896,17 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createOwnerQueueEntries;
 	}
 
+	private Future<RabbitMQClient> deleteOwnerQueueEntries() {
+		Future<RabbitMQClient> deleteOwnerQueueEntries = Future.future();
+		client.queueDelete(requested_entity + ".notification", notification_queue_handler -> {
+			if (notification_queue_handler.succeeded()) {
+				deleteOwnerQueueEntries.complete();
+
+			}
+		});
+		return deleteOwnerQueueEntries;
+	}
+	
 	/**
 	 * This method is used to create bindings in RabbitMQ for Owners.
 	 * 
