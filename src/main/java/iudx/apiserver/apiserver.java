@@ -453,6 +453,16 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	}
 	
 	
+	/**
+	 * This method is the implementation of owner De-Registration API, which handles
+	 * owner de-registration requests by IUDX admin.
+	 * 
+	 * @param HttpServerRequest req - This is the handle for the incoming request
+	 *                          from client.
+	 * @return HttpServerResponse resp - This sends the appropriate response for the
+	 *         incoming request.
+	 */
+	
 	private void de_register_owner(HttpServerRequest req) {
 
 		resp = req.response();
@@ -867,6 +877,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createOwnerExchangeEntries;
 	}
 
+	/**
+	 * This method is used to delete exchanges in RabbitMQ for Owners.
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> deleteOwnerExchangeEntries - This is a callable
+	 *         Future which notifies the caller on completion of exchange deletion.
+	 */
+	
 	private Future<RabbitMQClient> deleteOwnerExchangeEntries() {
 		Future<RabbitMQClient> deleteOwnerExchangeEntries = Future.future();
 		client.exchangeDelete(requested_entity + ".notification", notification_exchange_handler -> {
@@ -896,6 +914,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createOwnerQueueEntries;
 	}
 
+	/**
+	 * This method is used to delete queues in RabbitMQ for Owners.
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> deleteOwnerQueueEntries - This is a callable Future
+	 *         which notifies the caller on completion of queue deletion.
+	 */
+	
 	private Future<RabbitMQClient> deleteOwnerQueueEntries() {
 		Future<RabbitMQClient> deleteOwnerQueueEntries = Future.future();
 		client.queueDelete(requested_entity + ".notification", notification_queue_handler -> {
