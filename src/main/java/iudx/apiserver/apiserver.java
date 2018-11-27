@@ -783,6 +783,16 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		}
 	}
 	
+	/**
+	 * This method is the implementation of entity De-Registration API, which handles
+	 * the device or application de-registration requests by owners.
+	 * 
+	 * @param HttpServerRequest req - This is the handle for the incoming request
+	 *                          from client.
+	 * @return HttpServerResponse resp - This sends the appropriate response for the
+	 *         incoming request.
+	 */
+	
 	private void de_register(HttpServerRequest req) {
 
 		resp = req.response();
@@ -1153,6 +1163,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createExchangeEntries;
 	}
 
+	/**
+	 * This method is used to delete exchanges in RabbitMQ for entities.
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> deleteExchangeEntries - This is a callable
+	 *         Future which notifies the caller on completion of exchange deletion.
+	 */
+	
 	private Future<RabbitMQClient> deleteExchangeEntries() {
 		Future<RabbitMQClient> deleteExchangeEntries = Future.future();
 		client.exchangeDelete(registration_entity_id + ".private", private_exchange_handler -> {
@@ -1218,6 +1236,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createQueueEntries;
 	}
 
+	/**
+	 * This method is used to delete queues in RabbitMQ for entities.
+	 * 
+	 * @param Nothing.
+	 * @return Future<RabbitMQClient> deleteQueueEntries - This is a callable Future
+	 *         which notifies the caller on completion of queue deletion.
+	 */
+	
 	private Future<RabbitMQClient> deleteQueueEntries() {
 		Future<RabbitMQClient> deleteQueueEntries = Future.future();
 		client.queueDelete(registration_entity_id, queue_handler -> {
