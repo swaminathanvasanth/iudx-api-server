@@ -276,13 +276,26 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			} else if(event.method().toString().equalsIgnoreCase("DELETE")) {
 				de_register_owner(event);
 				break;
+			} else {
+				resp = event.response();
+				resp.setStatusCode(404).end();
+				break;
 			}
 		case PATH_PUBLISH_version_1_0_0:
 			publish(event);
 			break;
 		case PATH_REGISTRATION_version_1_0_0:
-			register(event);
-			break;
+			if(event.method().toString().equalsIgnoreCase("POST")) {
+				register(event);
+				break;
+			} else if(event.method().toString().equalsIgnoreCase("DELETE")) {
+				de_register(event);
+				break;
+			} else {
+				resp = event.response();
+				resp.setStatusCode(404).end();
+				break;
+			}			
 		}
 	}
 	
@@ -770,6 +783,142 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		}
 	}
 	
+	private void de_register(HttpServerRequest req) {
+
+		resp = req.response();
+		database_client = PgClient.pool(vertx, options);
+		requested_id = req.getHeader("id");
+
+		// Check if ID is owner
+		if (requested_id.contains("/")) {
+			resp.setStatusCode(401).end();
+			return;
+		} else {
+			requested_apikey = req.getHeader("apikey");
+			requested_entity = req.getHeader("entity");
+			// Check if entity header contains a '/'
+			if (requested_entity.contains("/")) {
+				resp.setStatusCode(401).end();
+				return;
+			} else {
+			connection_pool_id = requested_id + requested_apikey;
+			registration_entity_id = requested_id + "/" + requested_entity;
+
+			// Check if ID already exists
+			entity_already_exists = true;
+			entity_verification = verifyentity(registration_entity_id);
+
+			entity_verification.setHandler(entity_verification_handler -> {
+
+				if (entity_verification_handler.succeeded()) {
+					if (! entity_already_exists) {
+						message = new JsonObject();
+						message.put("failure", "Entity ID not found");
+						resp.setStatusCode(401).end(message.toString());
+						return;
+					} else {
+						database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
+								database_response -> {
+									if (database_response.succeeded()) {
+										resultSet = database_response.result().iterator();
+										if (!resultSet.hasNext()) {
+											resp.setStatusCode(404).end();
+											return;
+										}
+
+										row = resultSet.next();
+										generate_hash(requested_apikey);
+
+										// Check the hash of owner with the hash in DB
+										// Check if blocked is false
+
+										if (row.getString(1).equalsIgnoreCase(apikey_hash)
+												&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
+											
+											if (!rabbitpool.containsKey(connection_pool_id)) {
+												init_connection = getRabbitMQClient(connection_pool_id, requested_id,
+														requested_apikey);
+												init_connection.setHandler(init_connection_handler -> {
+													if (init_connection_handler.succeeded()) {
+														client = rabbitpool.get(connection_pool_id);
+														completed_exchange_entry_deletion = deleteExchangeEntries();
+														completed_queue_entry_deletion = deleteQueueEntries();
+														completed_exchange_entry_deletion.setHandler(
+																completed_exchange_entry_deletion_handler -> {
+																	if (completed_exchange_entry_deletion_handler
+																			.succeeded()) {
+																		completed_queue_entry_deletion.setHandler(
+																				completed_queue_entry_deletion_handler -> {
+																					if (completed_queue_entry_deletion_handler
+																							.succeeded()) {
+																						database_client
+																								.preparedQuery(
+																										"DELETE FROM USERS WHERE ID = '"
+																												+ registration_entity_id
+																												+ "'",
+																										delete_res -> {
+																											if (delete_res
+																													.succeeded()) {
+																												resp.setStatusCode(
+																														200)
+																														.end();
+																												return;
+																											}
+																										});
+																					}
+																				});
+																	}
+																});
+													}
+												});
+
+											} else {
+												client = rabbitpool.get(connection_pool_id);
+												completed_exchange_entry_deletion = deleteExchangeEntries();
+												completed_queue_entry_deletion = deleteQueueEntries();
+												completed_exchange_entry_deletion.setHandler(
+														completed_exchange_entry_deletion_handler -> {
+															if (completed_exchange_entry_deletion_handler
+																	.succeeded()) {
+																completed_queue_entry_deletion.setHandler(
+																		completed_queue_entry_deletion_handler -> {
+																			if (completed_queue_entry_deletion_handler
+																					.succeeded()) {
+																				database_client
+																						.preparedQuery(
+																								"DELETE FROM USERS WHERE ID = '"
+																										+ registration_entity_id
+																										+ "'",
+																								delete_res -> {
+																									if (delete_res
+																											.succeeded()) {
+																										resp.setStatusCode(
+																												200)
+																												.end();
+																										return;
+																									}
+																								});
+																			}
+																		});
+															}
+														});
+											}
+										}
+									} else {
+										resp.setStatusCode(404).end();
+										return;
+									}
+								});
+
+					}
+
+				}
+			});
+		}
+	}
+	}
+
+	
 	/**
 	 * This method is used to verify if the requested registration entity is already
 	 * registered.
@@ -1004,6 +1153,36 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createExchangeEntries;
 	}
 
+	private Future<RabbitMQClient> deleteExchangeEntries() {
+		Future<RabbitMQClient> deleteExchangeEntries = Future.future();
+		client.exchangeDelete(registration_entity_id + ".private", private_exchange_handler -> {
+			if (private_exchange_handler.succeeded()) {
+				client.exchangeDelete(registration_entity_id + ".public", public_exchange_handler -> {
+					if (public_exchange_handler.succeeded()) {
+						client.exchangeDelete(registration_entity_id + ".protected", protected_exchange_handler -> {
+							if (protected_exchange_handler.succeeded()) {
+								client.exchangeDelete(registration_entity_id + ".diagnostics", diagnostics_exchange_handler -> {
+									if (diagnostics_exchange_handler.succeeded()) {
+										client.exchangeDelete(registration_entity_id + ".notification", notification_exchange_handler -> {
+											if (notification_exchange_handler.succeeded()) {
+												client.exchangeDelete(registration_entity_id + ".publish", publish_exchange_handler -> {
+													if (publish_exchange_handler.succeeded()) {
+														deleteExchangeEntries.complete();
+																											}
+																										});
+																					}
+																				});
+																	}
+																});
+													}
+												});
+									}
+								});
+					}
+				});
+		return deleteExchangeEntries;
+	}
+	
 	/**
 	 * This method is used to create queues in RabbitMQ for entities.
 	 * 
@@ -1039,6 +1218,34 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		return createQueueEntries;
 	}
 
+	private Future<RabbitMQClient> deleteQueueEntries() {
+		Future<RabbitMQClient> deleteQueueEntries = Future.future();
+		client.queueDelete(registration_entity_id, queue_handler -> {
+			if(queue_handler.succeeded()) {
+				client.queueDelete(registration_entity_id + ".private", private_queue_handler -> {
+					if(private_queue_handler.succeeded()) {
+						client.queueDelete(registration_entity_id + ".priority", priority_queue_handler -> {
+							if(priority_queue_handler.succeeded()) {
+								client.queueDelete(registration_entity_id + ".command", command_queue_handler -> {
+									if(private_queue_handler.succeeded()) {
+										client.queueDelete(registration_entity_id + ".notification", notification_queue_handler -> {
+											if(notification_queue_handler.succeeded()) {
+												deleteQueueEntries.complete();
+												
+																			}
+																		});
+															}
+														});
+											}
+										});
+							}
+						});
+			}
+		});
+		return deleteQueueEntries;
+	}
+
+	
 	/**
 	 * This method is used to create bindings in RabbitMQ for entities.
 	 * 
