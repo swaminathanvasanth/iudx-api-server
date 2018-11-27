@@ -301,6 +301,10 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		resp = req.response();
 		database_client = PgClient.pool(vertx, options);
 		requested_id = req.getHeader("id");
+		if (!requested_id.equalsIgnoreCase("admin")) {
+			resp.setStatusCode(401).end();
+			return;
+		} else {
 		requested_apikey = req.getHeader("apikey");
 		requested_entity = req.getHeader("owner");
 
@@ -450,6 +454,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 				}
 			});
 		}
+		}
 	}
 	
 	
@@ -468,6 +473,10 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		resp = req.response();
 		database_client = PgClient.pool(vertx, options);
 		requested_id = req.getHeader("id");
+		if (!requested_id.equalsIgnoreCase("admin")) {
+			resp.setStatusCode(401).end();
+			return;
+		} else {
 		requested_apikey = req.getHeader("apikey");
 		requested_entity = req.getHeader("owner");
 
@@ -580,7 +589,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 				}
 			});
 		}
-		
+		}
 	}
 	
 	/**
