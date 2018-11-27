@@ -458,6 +458,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 														}
 													});
 										}
+									} else {
+										resp.setStatusCode(401).end();
+										return;
 									}
 								});
 					}
@@ -593,6 +596,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 														}
 													});
 										}
+									} else {
+										resp.setStatusCode(401).end();
+										return;
 									}
 								});
 					}
@@ -769,6 +775,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 															}
 														});
 											}
+										} else {
+											resp.setStatusCode(401).end();
+											return;
 										}
 									} else {
 										resp.setStatusCode(404).end();
@@ -913,6 +922,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 															}
 														});
 											}
+										} else {
+											resp.setStatusCode(401).end();
+											return;
 										}
 									} else {
 										resp.setStatusCode(404).end();
