@@ -139,6 +139,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_REGISTER = "/register";
 	/**  Defines the owner registration API endpoint */
 	private static final String PATH_REGISTER_OWNER = "/register-owner";
+	private static final String PATH_BLOCK_ENTITY = "/block";
 	
 	
 	// IUDX APIs ver. 1.0.0
@@ -148,6 +149,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER;
 	/**  Defines the Owner Registration API (1.0.0) endpoint */
 	private static final String PATH_OWNER_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER_OWNER;
+	private static final String PATH_BLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_BLOCK_ENTITY;
 	
 	// Used in registration API to connect with PostgresQL
 	/**  A PostgresQL client pool to handle database connection */
@@ -295,7 +297,16 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 				resp = event.response();
 				resp.setStatusCode(404).end();
 				break;
-			}			
+			}
+		case PATH_BLOCK_ENTITY_version_1_0_0:
+			if(event.method().toString().equalsIgnoreCase("POST")) {
+				block(event);
+				break;
+			} else {
+				resp = event.response();
+				resp.setStatusCode(404).end();
+				break;
+			}
 		}
 	}
 	
@@ -940,7 +951,85 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	}
 	}
 
-	
+	private void block(HttpServerRequest req) {
+
+		resp = req.response();
+		database_client = PgClient.pool(vertx, options);
+		requested_id = req.getHeader("id");
+
+		// Check if ID is owner
+		if (requested_id.contains("/")) {
+			resp.setStatusCode(401).end();
+			return;
+		} else {
+			requested_apikey = req.getHeader("apikey");
+			requested_entity = req.getHeader("entity");
+			// Check if entity header contains a '/'
+			if (requested_entity.contains("/")) {
+				resp.setStatusCode(401).end();
+				return;
+			} else {
+				connection_pool_id = requested_id + requested_apikey;
+				registration_entity_id = requested_id + "/" + requested_entity;
+
+				// Check if ID already exists
+				entity_already_exists = true;
+				entity_verification = verifyentity(registration_entity_id);
+
+				entity_verification.setHandler(entity_verification_handler -> {
+
+					if (entity_verification_handler.succeeded()) {
+						if (!entity_already_exists) {
+							message = new JsonObject();
+							message.put("failure", "Entity ID not found");
+							resp.setStatusCode(401).end(message.toString());
+							return;
+						} else {
+							
+							database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
+									database_response -> {
+										if (database_response.succeeded()) {
+											resultSet = database_response.result().iterator();
+											if (!resultSet.hasNext()) {
+												resp.setStatusCode(404).end();
+												return;
+											}
+
+											row = resultSet.next();
+											generate_hash(requested_apikey);
+
+											// Check the hash of owner with the hash in DB
+											// Check if blocked is false
+
+											if (row.getString(1).equalsIgnoreCase(apikey_hash)
+													&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
+
+												database_client.preparedQuery(
+														"UPDATE users SET BLOCKED = TRUE WHERE id = '"
+																+ registration_entity_id + "'",
+														database_update_response -> {
+															if (database_response.succeeded()) {
+																resp.setStatusCode(200).end();
+																return;
+															}
+														});
+											} else {
+												resp.setStatusCode(401).end();
+												return;
+											}
+										} else {
+											resp.setStatusCode(401).end();
+											return;
+										}
+									});
+						}
+					}
+				});
+
+			}
+		}
+	}
+
 	/**
 	 * This method is used to verify if the requested registration entity is already
 	 * registered.
