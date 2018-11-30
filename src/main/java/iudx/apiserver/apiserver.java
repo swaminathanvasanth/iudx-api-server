@@ -139,7 +139,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_REGISTER = "/register";
 	/**  Defines the owner registration API endpoint */
 	private static final String PATH_REGISTER_OWNER = "/register-owner";
+	/**  Defines the entity blocking API endpoint */
 	private static final String PATH_BLOCK_ENTITY = "/block";
+	/**  Defines the entity un-blocking API endpoint */
 	private static final String PATH_UNBLOCK_ENTITY = "/unblock";
 	
 	
@@ -150,7 +152,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER;
 	/**  Defines the Owner Registration API (1.0.0) endpoint */
 	private static final String PATH_OWNER_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER_OWNER;
+	/**  Defines the Entity Blocking API (1.0.0) endpoint */
 	private static final String PATH_BLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_BLOCK_ENTITY;
+	/**  Defines the Entity Un-Blocking API (1.0.0) endpoint */
 	private static final String PATH_UNBLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_UNBLOCK_ENTITY;
 	
 	// Used in registration API to connect with PostgresQL
@@ -962,6 +966,19 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	}
 	}
 
+	/**
+	 * This method is the implementation of entity Block and Un-Block API, which
+	 * handles the device or application block requests by owners.
+	 * 
+	 * @param HttpServerRequest req - This is the handle for the incoming request
+	 *                          from client.
+	 * @param                   boolean block - This is the flag for a block request
+	 * @param                   boolean un_block - This is the flag for an un-block
+	 *                          request
+	 * @return HttpServerResponse resp - This sends the appropriate response for the
+	 *         incoming request.
+	 */
+	
 	private void block(HttpServerRequest req, boolean block, boolean un_block) {
 
 		resp = req.response();
