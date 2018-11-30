@@ -140,6 +140,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	/**  Defines the owner registration API endpoint */
 	private static final String PATH_REGISTER_OWNER = "/register-owner";
 	private static final String PATH_BLOCK_ENTITY = "/block";
+	private static final String PATH_UNBLOCK_ENTITY = "/unblock";
 	
 	
 	// IUDX APIs ver. 1.0.0
@@ -150,6 +151,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	/**  Defines the Owner Registration API (1.0.0) endpoint */
 	private static final String PATH_OWNER_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER_OWNER;
 	private static final String PATH_BLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_BLOCK_ENTITY;
+	private static final String PATH_UNBLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_UNBLOCK_ENTITY;
 	
 	// Used in registration API to connect with PostgresQL
 	/**  A PostgresQL client pool to handle database connection */
@@ -300,7 +302,16 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			}
 		case PATH_BLOCK_ENTITY_version_1_0_0:
 			if(event.method().toString().equalsIgnoreCase("POST")) {
-				block(event);
+				block(event, true, false);
+				break;
+			} else {
+				resp = event.response();
+				resp.setStatusCode(404).end();
+				break;
+			}
+		case PATH_UNBLOCK_ENTITY_version_1_0_0:
+			if(event.method().toString().equalsIgnoreCase("POST")) {
+				block(event, false, true);
 				break;
 			} else {
 				resp = event.response();
@@ -951,7 +962,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	}
 	}
 
-	private void block(HttpServerRequest req) {
+	private void block(HttpServerRequest req, boolean block, boolean un_block) {
 
 		resp = req.response();
 		database_client = PgClient.pool(vertx, options);
@@ -1004,15 +1015,27 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 											if (row.getString(1).equalsIgnoreCase(apikey_hash)
 													&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
 
-												database_client.preparedQuery(
-														"UPDATE users SET BLOCKED = TRUE WHERE id = '"
-																+ registration_entity_id + "'",
-														database_update_response -> {
-															if (database_response.succeeded()) {
-																resp.setStatusCode(200).end();
-																return;
-															}
-														});
+												if (block) {
+													database_client.preparedQuery(
+															"UPDATE users SET BLOCKED = TRUE WHERE id = '"
+																	+ registration_entity_id + "'",
+															database_update_response -> {
+																if (database_response.succeeded()) {
+																	resp.setStatusCode(200).end();
+																	return;
+																}
+															});
+												} else if (un_block) {
+													database_client.preparedQuery(
+															"UPDATE users SET BLOCKED = FALSE WHERE id = '"
+																	+ registration_entity_id + "'",
+															database_update_response -> {
+																if (database_response.succeeded()) {
+																	resp.setStatusCode(200).end();
+																	return;
+																}
+															});
+												}
 											} else {
 												resp.setStatusCode(401).end();
 												return;
