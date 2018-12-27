@@ -31,15 +31,18 @@ import com.julienviet.pgclient.Row;
 import com.julienviet.pgclient.Tuple;
 
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.AsyncResult;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.JksOptions;
 import io.vertx.rabbitmq.RabbitMQClient;
@@ -135,6 +138,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	// IUDX APIs
 	/**  Defines the Publish API endpoint */
 	private static final String PATH_PUBLISH = "/publish";
+	private static final String PATH_SUBSCRIBE = "/subscribe";
 	/**  Defines the registration API endpoint */
 	private static final String PATH_REGISTER = "/register";
 	/**  Defines the owner registration API endpoint */
@@ -148,6 +152,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	// IUDX APIs ver. 1.0.0
 	/**  Defines the Publish API (1.0.0) endpoint */
 	private static final String PATH_PUBLISH_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_PUBLISH;
+	private static final String PATH_SUBSCRIBE_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_SUBSCRIBE;
 	/**  Defines the Registration API (1.0.0) endpoint */
 	private static final String PATH_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER;
 	/**  Defines the Owner Registration API (1.0.0) endpoint */
@@ -156,6 +161,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_BLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_BLOCK_ENTITY;
 	/**  Defines the Entity Un-Blocking API (1.0.0) endpoint */
 	private static final String PATH_UNBLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_UNBLOCK_ENTITY;
+	
 	
 	// Used in registration API to connect with PostgresQL
 	/**  A PostgresQL client pool to handle database connection */
@@ -180,7 +186,11 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private MessageDigest digest;
 	/** A boolean variable (FLAG) used for handling the state of the MessageDigest object */
 	private boolean initiated_digest = false;
-
+	private JsonObject json, response;
+	private JsonArray array;
+	private String data,from,routing_key,content_type;
+	private boolean response_written = false, default_message_type = false;
+	private int num_messages = 0, count = 0, read = 0;
 	
 	/**
 	 * This method is used to setup and start the Vert.x server. It uses the
@@ -291,6 +301,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			}
 		case PATH_PUBLISH_version_1_0_0:
 			publish(event);
+			break;
+		case PATH_SUBSCRIBE_ENTITY_version_1_0_0:
+			subscribe(event);
 			break;
 		case PATH_REGISTRATION_version_1_0_0:
 			if(event.method().toString().equalsIgnoreCase("POST")) {
@@ -1509,6 +1522,161 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 					message, null);
 			resp.setStatusCode(200).end();
 		}
+	}
+
+	private void subscribe(HttpServerRequest request) {
+		array = new JsonArray();
+		resp = request.response();
+		resp.setChunked(true);
+		requested_id = request.getHeader("id");
+		requested_apikey = request.getHeader("apikey");
+		message_type = request.getHeader("message-type");
+		if (message_type == null) {
+			message_type = "";
+			default_message_type = true;
+		} else {
+			message_type = ("." + message_type).trim();
+			default_message_type = false;
+		}
+		if (message_type.equalsIgnoreCase(".priority") || message_type.equalsIgnoreCase(".command")
+				|| message_type.equalsIgnoreCase(".notification") || message_type.equalsIgnoreCase("")) {
+
+			count = read = 0;
+			response_written = false;
+			try {
+				num_messages = Integer.parseInt(request.getHeader("num-messages"));
+				if (num_messages > 100) {
+					num_messages = 100;
+				}
+			} catch (Exception e) {
+				num_messages = 10;
+			}
+
+			connection_pool_id = requested_id + requested_apikey;
+
+			if (!rabbitpool.containsKey(connection_pool_id)) {
+				broker_client = getRabbitMQClient(connection_pool_id, requested_id, requested_apikey);
+				broker_client.setHandler(broker_client_start_handler -> {
+					for (count = 1; count <= num_messages; count++) {
+						Future<RabbitMQClient> completedgetData = getData(broker_client_start_handler);
+						completedgetData.setHandler(completed_getData_handler -> {
+							if (completed_getData_handler.succeeded()) {
+								resp.setStatusCode(200).write(array + "\r\n").end();
+								response_written = true;
+								return;
+							}
+						});
+					}
+				});
+			}
+		} else {
+			response = new JsonObject();
+			response.put("error", "invalid message-type");
+			resp.setStatusCode(400).write(response + "\r\n").end();
+			response_written = true;
+			return;
+		}
+	}
+
+	private Future<RabbitMQClient> getData(AsyncResult<RabbitMQClient> broker_client_start_handler) {
+		Future<RabbitMQClient> getData = Future.future();
+		if (broker_client_start_handler.succeeded()) {
+			if (default_message_type) {
+				default_message_type = false;
+				rabbitpool.get(connection_pool_id).basicGet(requested_id, true, queue_handler -> {
+					if (queue_handler.succeeded()) {
+						json = (JsonObject) queue_handler.result();
+						try {
+							data = json.getString("body");
+							from = json.getString("exchange");
+							System.out.println(from + from.length());
+							routing_key = json.getString("routingKey");
+							content_type = json.getString("content-type");
+
+							if (data == null || data == "" || data.length() == 0) {
+								data = "<empty>";
+							}
+
+							if (from == null || from == "" || from.length() == 0) {
+								from = "<unverified>";
+							}
+
+							if (routing_key == null || routing_key == "" || routing_key.length() == 0) {
+								routing_key = "<unverified>";
+							}
+
+							if (content_type == null || content_type == "" || content_type.length() == 0) {
+								content_type = "<unverified>";
+							}
+
+							response = new JsonObject();
+							response.put("data", data);
+							response.put("from", from);
+							response.put("topic", routing_key);
+							response.put("content-type", content_type);
+							array.add(response);
+							read = read + 1;
+							if (read == num_messages) {
+								getData.complete();
+							}
+						} catch (Exception ex) {
+							if (!response_written) {
+								resp.setStatusCode(200).write(array + "\r\n").end();
+								response_written = true;
+								return;
+							}
+						}
+					}
+				});
+			} else {
+				rabbitpool.get(connection_pool_id).basicGet(requested_id + message_type, true, queue_handler -> {
+					if (queue_handler.succeeded()) {
+						json = (JsonObject) queue_handler.result();
+						try {
+							data = json.getString("body");
+							from = json.getString("exchange");
+							System.out.println(from + from.length());
+							routing_key = json.getString("routingKey");
+							content_type = json.getString("content-type");
+
+							if (data == null || data == "" || data.length() == 0) {
+								data = "<empty>";
+							}
+
+							if (from == null || from == "" || from.length() == 0) {
+								from = "<unverified>";
+							}
+
+							if (routing_key == null || routing_key == "" || routing_key.length() == 0) {
+								routing_key = "<unverified>";
+							}
+
+							if (content_type == null || content_type == "" || content_type.length() == 0) {
+								content_type = "<unverified>";
+							}
+
+							response = new JsonObject();
+							response.put("data", data);
+							response.put("from", from);
+							response.put("topic", routing_key);
+							response.put("content-type", content_type);
+							array.add(response);
+							read = read + 1;
+							if (read == num_messages) {
+								getData.complete();
+							}
+						} catch (Exception ex) {
+							if (!response_written) {
+								resp.setStatusCode(200).write(array + "\r\n").end();
+								response_written = true;
+								return;
+							}
+						}
+					}
+				});
+			}
+		}
+		return getData;
 	}
 
 	/**
