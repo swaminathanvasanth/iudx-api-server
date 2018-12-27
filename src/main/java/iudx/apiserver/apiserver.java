@@ -186,11 +186,32 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private MessageDigest digest;
 	/** A boolean variable (FLAG) used for handling the state of the MessageDigest object */
 	private boolean initiated_digest = false;
-	private JsonObject json, response;
+	
+	// Used in subscribe API
+	/**  Handles the read data object for HTTP subscribe request */
+	private JsonObject json;
+	/**  Handles the response data object for HTTP subscribe request */
+	private JsonObject response;
+	/**  Handles the response data array for HTTP subscribe request */
 	private JsonArray array;
-	private String data,from,routing_key,content_type;
-	private boolean response_written = false, default_message_type = false;
-	private int num_messages = 0, count = 0, read = 0;
+	/** Handles the data read from RabbitMQ queue for the HTTP subscribe API request */
+	private String data;
+	/** Handles the sender information of the data read from RabbitMQ queue for the HTTP subscribe API request */
+	private String from;
+	/** Handles the topic of the data read from RabbitMQ queue for the HTTP subscribe API request */
+	private String routing_key;
+	/** Handles the content type of the data read from RabbitMQ queue for the HTTP subscribe API request */
+	private String content_type;
+	/** A boolean variable (FLAG) used for handling the state of the HTTP subscribe API request */
+	private boolean response_written = false;
+	/** A boolean variable (FLAG) used for handling the message_type in the subscribe API request */
+	private boolean default_message_type = false;
+	/** An integer variable used for handling the number of messages requested for a subscribe API request */
+	private int num_messages = 0;
+	/** An integer variable used for handling the number of messages to be read from RabbitMQ for a subscribe API request */
+	private int count = 0;
+	/** An integer variable used for handling the number of messages read from RabbitMQ for a subscribe API request */
+	private int read = 0;
 	
 	/**
 	 * This method is used to setup and start the Vert.x server. It uses the
@@ -1524,6 +1545,15 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		}
 	}
 
+	/**
+	 * This method is the implementation of Subscribe API, which handles the
+	 * subscription request by clients.
+	 * 
+	 * @param HttpServerRequest event - This is the handle for the incoming request
+	 *                          from client.
+	 * @return void - Though the return type is void, the HTTP response is written internally as per the request. 
+	 */
+	
 	private void subscribe(HttpServerRequest request) {
 		array = new JsonArray();
 		resp = request.response();
@@ -1578,6 +1608,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		}
 	}
 
+	/**
+	 * This method is used to get data from RabbitMQ queues.
+	 * 
+	 * @param AsyncResult<RabbitMQClient> broker_client_start_handler - This is the client handler for connecting with the RabbitMQ.
+	 * @return Future<RabbitMQClient> getData - This is a callable Future which
+	 *         notifies the caller on completion of reading data from queue.
+	 */
+	
 	private Future<RabbitMQClient> getData(AsyncResult<RabbitMQClient> broker_client_start_handler) {
 		Future<RabbitMQClient> getData = Future.future();
 		if (broker_client_start_handler.succeeded()) {
