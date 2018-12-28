@@ -19,6 +19,7 @@ import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.util.Map;
 import java.util.Random;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.lang3.RandomStringUtils;
@@ -77,6 +78,10 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	/** Handles the message-type header in the HTTP Publish API request */
 	private String message_type;
 
+	private String permission;
+	private String topic;
+	private String validity;
+	private String follow_id;
 	/** Handles the owner / entity header in the HTTP Registration API request */
 	private String requested_entity;
 	/** Handles the updated entity name from the HTTP Registration API request */
@@ -1715,6 +1720,132 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 			}
 		}
 		return getData;
+	}
+
+	private void follow(HttpServerRequest request) {
+		resp = request.response();
+		requested_id = request.getHeader("id");
+		requested_apikey = request.getHeader("apikey");
+		entity_already_exists = true;
+		entity_verification = verifyentity(requested_id);
+		entity_verification.setHandler(entity_verification_handler -> {
+			if (entity_verification_handler.succeeded()) {
+				if (!entity_already_exists) {
+					message = new JsonObject();
+					message.put("failure", "ID not found");
+					resp.setStatusCode(404).end(message.toString());
+					return;
+				} else {
+					database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
+							database_response -> {
+								if (database_response.succeeded()) {
+									resultSet = database_response.result().iterator();
+									if (!resultSet.hasNext()) {
+										resp.setStatusCode(404).end();
+										return;
+									}
+
+									row = resultSet.next();
+									generate_hash(requested_apikey);
+
+									// Check the hash of owner with the hash in DB
+									// Check if blocked is false
+
+									if (row.getString(1).equalsIgnoreCase(apikey_hash)) {
+
+										to = request.getHeader("to");
+										entity_already_exists = true;
+										entity_verification = verifyentity(to);
+										entity_verification.setHandler(provider_entity_verification_handler -> {
+											if (provider_entity_verification_handler.succeeded()) {
+												if (!entity_already_exists) {
+													message = new JsonObject();
+													message.put("failure", "Requested data provider ID not found");
+													resp.setStatusCode(401).end(message.toString());
+													return;
+												}
+											}
+										});
+
+										permission = request.getHeader("permission");
+										if (permission.equalsIgnoreCase("read") || permission.equalsIgnoreCase("write")
+												|| permission.equalsIgnoreCase("read-write")) {
+
+										} else {
+											message = new JsonObject();
+											message.put("failure", "Invalid permissions");
+											resp.setStatusCode(403).end(message.toString());
+											return;
+										}
+										topic = request.getHeader("topic");
+										validity = request.getHeader("validity");
+										subject = "follow-request";
+										try {
+											from = request.getHeader("from");
+										} catch (Exception ex) {
+											from = requested_id;
+										}
+										message = new JsonObject();
+										connection_pool_id = requested_id + requested_apikey;
+
+										if (!rabbitpool.containsKey(connection_pool_id)) {
+											broker_client = getRabbitMQClient(connection_pool_id, requested_id,
+													requested_apikey);
+											broker_client.setHandler(broker_client_start_handler -> {
+												if (broker_client_start_handler.succeeded()) {
+													generateFollowID();
+													message.put("permission", permission);
+													message.put("validity", validity);
+													message.put("from", from);
+													message.put("topic", topic);
+													message.put("follow-id", follow_id);
+													rabbitpool.get(connection_pool_id).basicPublish(to, subject,
+															message, null);
+													resp.setStatusCode(202).end();
+												}
+											});
+										} else {
+											message.put("permission", permission);
+											message.put("validity", validity);
+											message.put("from", from);
+											message.put("topic", topic);
+											rabbitpool.get(connection_pool_id).basicPublish(to, subject, message, null);
+											resp.setStatusCode(202).end();
+										}
+									} else {
+										message = new JsonObject();
+										message.put("failure", "Invalid apikey");
+										resp.setStatusCode(403).end(message.toString());
+										return;
+									}
+								}
+							});
+				}
+			}
+		});
+	}
+
+	private void generateFollowID() {
+		follow_id = RandomStringUtils.random(8, 0, PASSWORDCHARS.length(), true, true, PASSWORDCHARS.toCharArray());
+		validateFollowID(follow_id);
+	}
+
+	private void validateFollowID(String follow_id) {
+		database_client.preparedQuery("SELECT * FROM follow WHERE follow_id = '" + follow_id + "'",
+				database_response -> {
+					if (database_response.succeeded()) {
+						resultSet = database_response.result().iterator();
+						if (!resultSet.hasNext()) {
+							saveFollowID();
+						} else {
+							generateFollowID();
+						}
+					}
+				});
+	}
+
+	private void saveFollowID() {
+
 	}
 
 	/**
