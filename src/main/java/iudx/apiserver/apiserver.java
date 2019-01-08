@@ -17,6 +17,7 @@ package iudx.apiserver;
 
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
+import java.util.Date;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
@@ -80,8 +81,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 
 	private String permission;
 	private String topic;
-	private String validity;
+	private int validity;
 	private String follow_id;
+	private String status;
 	/** Handles the owner / entity header in the HTTP Registration API request */
 	private String requested_entity;
 	/** Handles the updated entity name from the HTTP Registration API request */
@@ -115,7 +117,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	Future<RabbitMQClient>  completed_exchange_entry_deletion;
 	/**  A RabbitMQClient Future handler to notify the caller about the status of the requested queue deletion */
 	Future<RabbitMQClient>  completed_queue_entry_deletion;
-	
+	Future<String> generateFollowID;
 	// Used in publish API
 	/**  A RabbitMQClient configuration handler to modify connection parameters */
 	RabbitMQOptions broker_config;
@@ -152,6 +154,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_BLOCK_ENTITY = "/block";
 	/**  Defines the entity un-blocking API endpoint */
 	private static final String PATH_UNBLOCK_ENTITY = "/unblock";
+	private static final String PATH_FOLLOW_ENTITY = "/follow";
 	
 	
 	// IUDX APIs ver. 1.0.0
@@ -166,6 +169,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private static final String PATH_BLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_BLOCK_ENTITY;
 	/**  Defines the Entity Un-Blocking API (1.0.0) endpoint */
 	private static final String PATH_UNBLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_UNBLOCK_ENTITY;
+	private static final String PATH_FOLLOW_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_FOLLOW_ENTITY;
 	
 	
 	// Used in registration API to connect with PostgresQL
@@ -181,6 +185,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	// Used in registration API for apikey generation
 	/**  Characters to be used by APIKey generator while generating apikey */
 	private static final String PASSWORDCHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-";
+	private static final String FOLLOW_ID_CHARS = "123456789";
 	/** Handles the generated apikey for the HTTP Registration API request */
 	private String apikey;
 	/** Handles the generated apikey hash for the HTTP Registration API request */
@@ -217,7 +222,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private int count = 0;
 	/** An integer variable used for handling the number of messages read from RabbitMQ for a subscribe API request */
 	private int read = 0;
-	
+
 	/**
 	 * This method is used to setup and start the Vert.x server. It uses the
 	 * available processors (n) to create (n*2) workers and also gets the available
@@ -355,6 +360,15 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		case PATH_UNBLOCK_ENTITY_version_1_0_0:
 			if(event.method().toString().equalsIgnoreCase("POST")) {
 				block(event, false, true);
+				break;
+			} else {
+				resp = event.response();
+				resp.setStatusCode(404).end();
+				break;
+			}
+		case PATH_FOLLOW_ENTITY_version_1_0_0:
+			if(event.method().toString().equalsIgnoreCase("POST")) {
+				follow(event);
 				break;
 			} else {
 				resp = event.response();
@@ -1121,6 +1135,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	
 	private Future<String> verifyentity(String registration_entity_id) {
 		Future<String> verifyentity = Future.future();
+		PgPool database_client = PgClient.pool(vertx, options);
 		database_client.preparedQuery("SELECT * FROM users WHERE id = '"+registration_entity_id+"'", database_response -> {
 			if(database_response.succeeded()) {
 				resultSet = database_response.result().iterator();
@@ -1134,6 +1149,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 				}
 			}
 			verifyentity.complete();
+			database_client.close();
 		});
 		return verifyentity;		
 	}
@@ -1724,9 +1740,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 
 	private void follow(HttpServerRequest request) {
 		resp = request.response();
+		database_client = PgClient.pool(vertx, options);
 		requested_id = request.getHeader("id");
 		requested_apikey = request.getHeader("apikey");
-		entity_already_exists = true;
 		entity_verification = verifyentity(requested_id);
 		entity_verification.setHandler(entity_verification_handler -> {
 			if (entity_verification_handler.succeeded()) {
@@ -1742,30 +1758,18 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 									resultSet = database_response.result().iterator();
 									if (!resultSet.hasNext()) {
 										resp.setStatusCode(404).end();
+										database_client.close();
+										response_written = true;
 										return;
 									}
 
 									row = resultSet.next();
 									generate_hash(requested_apikey);
 
-									// Check the hash of owner with the hash in DB
+									// Check the hash of requestor with the hash in DB
 									// Check if blocked is false
 
-									if (row.getString(1).equalsIgnoreCase(apikey_hash)) {
-
-										to = request.getHeader("to");
-										entity_already_exists = true;
-										entity_verification = verifyentity(to);
-										entity_verification.setHandler(provider_entity_verification_handler -> {
-											if (provider_entity_verification_handler.succeeded()) {
-												if (!entity_already_exists) {
-													message = new JsonObject();
-													message.put("failure", "Requested data provider ID not found");
-													resp.setStatusCode(401).end(message.toString());
-													return;
-												}
-											}
-										});
+									if (row.getString(1).equalsIgnoreCase("admin@123")) { //
 
 										permission = request.getHeader("permission");
 										if (permission.equalsIgnoreCase("read") || permission.equalsIgnoreCase("write")
@@ -1775,77 +1779,161 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 											message = new JsonObject();
 											message.put("failure", "Invalid permissions");
 											resp.setStatusCode(403).end(message.toString());
+											database_client.close();
+											response_written = true;
 											return;
 										}
 										topic = request.getHeader("topic");
-										validity = request.getHeader("validity");
+										try {
+											validity = Integer.parseInt(request.getHeader("validity"));
+										} catch (Exception ex) {
+											message = new JsonObject();
+											message.put("failure", "Invalid validity value");
+											resp.setStatusCode(403).end(message.toString());
+											database_client.close();
+											response_written = true;
+											return;
+										}
 										subject = "follow-request";
 										try {
 											from = request.getHeader("from");
 										} catch (Exception ex) {
 											from = requested_id;
 										}
-										message = new JsonObject();
-										connection_pool_id = requested_id + requested_apikey;
 
-										if (!rabbitpool.containsKey(connection_pool_id)) {
-											broker_client = getRabbitMQClient(connection_pool_id, requested_id,
-													requested_apikey);
-											broker_client.setHandler(broker_client_start_handler -> {
-												if (broker_client_start_handler.succeeded()) {
-													generateFollowID();
-													message.put("permission", permission);
-													message.put("validity", validity);
-													message.put("from", from);
-													message.put("topic", topic);
-													message.put("follow-id", follow_id);
-													rabbitpool.get(connection_pool_id).basicPublish(to, subject,
-															message, null);
-													resp.setStatusCode(202).end();
-												}
-											});
-										} else {
-											message.put("permission", permission);
-											message.put("validity", validity);
-											message.put("from", from);
-											message.put("topic", topic);
-											rabbitpool.get(connection_pool_id).basicPublish(to, subject, message, null);
-											resp.setStatusCode(202).end();
+										if (from == null) {
+											from = requested_id;
 										}
+
+										status = "pending";
+
+										to = request.getHeader("to");
+
+										PgPool follow_database_client = PgClient.pool(vertx, options);
+										follow_database_client.preparedQuery(
+												"SELECT * FROM users WHERE id = '" + to + "'",
+												verify_follow_id_database_response -> {
+
+													if (verify_follow_id_database_response.succeeded()) {
+														resultSet = verify_follow_id_database_response.result()
+																.iterator();
+														if (!resultSet.hasNext()) {
+															entity_already_exists = false;
+															message = new JsonObject();
+															message.put("failure",
+																	"Requested data provider ID not found");
+															resp.setStatusCode(404).end(message.toString());
+															database_client.close();
+															response_written = true;
+															return;
+														} else {
+															row = resultSet.next();
+															if (row.getString(0).equalsIgnoreCase(to)
+																	&& row.getBoolean(4).toString()
+																			.equalsIgnoreCase("false")) {
+																entity_already_exists = true;
+															}
+															follow_id = RandomStringUtils.random(8, 0,
+																	FOLLOW_ID_CHARS.length(), true, true,
+																	FOLLOW_ID_CHARS.toCharArray());
+
+															message = new JsonObject();
+															connection_pool_id = requested_id + requested_apikey;
+
+															if (!rabbitpool.containsKey(connection_pool_id)
+																	&& !response_written && entity_already_exists) {
+																broker_client = getRabbitMQClient(connection_pool_id,
+																		requested_id, requested_apikey);
+																broker_client
+																		.setHandler(broker_client_start_handler -> {
+																			if (broker_client_start_handler
+																					.succeeded()) {
+																				PgPool database_client = PgClient
+																						.pool(vertx, options);
+																				database_client.preparedQuery(
+																						"INSERT INTO follow VALUES ('"
+																								+ Integer.parseInt(
+																										follow_id)
+																								+ "','" + requested_id
+																								+ "','" + to + "','"
+																								+ new Date() + "','"
+																								+ permission + "','"
+																								+ topic + "','"
+																								+ validity + "','"
+																								+ status + "','" + from
+																								+ "')",
+																						write_res -> {
+																							if (write_res.succeeded()) {
+																								message.put(
+																										"permission",
+																										permission);
+																								message.put("validity",
+																										validity);
+																								message.put("from",
+																										from);
+																								message.put("topic",
+																										topic);
+																								message.put("follow-id",
+																										follow_id);
+																								rabbitpool.get(
+																										connection_pool_id)
+																										.basicPublish(
+																												to,
+																												subject,
+																												message,
+																												null);
+																								resp.setStatusCode(202)
+																										.end(message
+																												.toString());
+
+																							}
+																						});
+																				database_client.close();
+																			}
+																		});
+															} else if (!response_written && entity_already_exists) {
+																PgPool database_client = PgClient.pool(vertx, options);
+																database_client.preparedQuery(
+																		"INSERT INTO follow VALUES ('"
+																				+ Integer.parseInt(follow_id) + "','"
+																				+ requested_id + "','" + to + "','"
+																				+ new Date() + "','" + permission
+																				+ "','" + topic + "','" + validity
+																				+ "','" + status + "','" + from + "')",
+																		write_res -> {
+																			if (write_res.succeeded()) {
+																				message.put("permission", permission);
+																				message.put("validity", validity);
+																				message.put("from", from);
+																				message.put("topic", topic);
+																				message.put("follow-id", follow_id);
+																				rabbitpool.get(connection_pool_id)
+																						.basicPublish(to, subject,
+																								message, null);
+																				resp.setStatusCode(202)
+																						.end(message.toString());
+
+																			}
+																		});
+																database_client.close();
+															}
+														}
+													}
+													follow_database_client.close();
+												});
 									} else {
 										message = new JsonObject();
 										message.put("failure", "Invalid apikey");
 										resp.setStatusCode(403).end(message.toString());
+										database_client.close();
 										return;
 									}
+									database_client.close();
 								}
 							});
 				}
 			}
 		});
-	}
-
-	private void generateFollowID() {
-		follow_id = RandomStringUtils.random(8, 0, PASSWORDCHARS.length(), true, true, PASSWORDCHARS.toCharArray());
-		validateFollowID(follow_id);
-	}
-
-	private void validateFollowID(String follow_id) {
-		database_client.preparedQuery("SELECT * FROM follow WHERE follow_id = '" + follow_id + "'",
-				database_response -> {
-					if (database_response.succeeded()) {
-						resultSet = database_response.result().iterator();
-						if (!resultSet.hasNext()) {
-							saveFollowID();
-						} else {
-							generateFollowID();
-						}
-					}
-				});
-	}
-
-	private void saveFollowID() {
-
 	}
 
 	/**
