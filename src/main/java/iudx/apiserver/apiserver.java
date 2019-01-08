@@ -1769,7 +1769,7 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 									// Check the hash of requestor with the hash in DB
 									// Check if blocked is false
 
-									if (row.getString(1).equalsIgnoreCase("admin@123")) { //
+									if (row.getString(1).equalsIgnoreCase(apikey_hash)) {
 
 										permission = request.getHeader("permission");
 										if (permission.equalsIgnoreCase("read") || permission.equalsIgnoreCase("write")
