@@ -13,30 +13,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package iudx.apiserver;
+package main.java.iudx.apiserver;
 
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.lang3.RandomStringUtils;
 
-import com.julienviet.pgclient.PgClient;
-import com.julienviet.pgclient.PgIterator;
-import com.julienviet.pgclient.PgPool;
-import com.julienviet.pgclient.PgPoolOptions;
-import com.julienviet.pgclient.Row;
-import com.julienviet.pgclient.Tuple;
+import com.google.common.hash.Hashing;
+
+import io.reactiverse.pgclient.PgClient;
+import io.reactiverse.pgclient.PgIterator;
+import io.reactiverse.pgclient.PgPool;
+import io.reactiverse.pgclient.PgPoolOptions;
+import io.reactiverse.reactivex.pgclient.Tuple;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.AsyncResult;
-import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
-import io.vertx.core.Vertx;
-import io.vertx.core.buffer.Buffer;
+import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
@@ -58,9 +56,9 @@ import io.vertx.rabbitmq.RabbitMQOptions;
  * @version 1.0.0
  */
 
-public class apiserver extends AbstractVerticle implements Handler<HttpServerRequest>, Runnable {
+public class apiserver extends AbstractVerticle implements  Handler<HttpServerRequest>{
 
-	public static Vertx vertx;
+//	public static Vertx vertx;
 	private HttpServer server;
 	
 	/** This handles the HTTP response for all API requests */
@@ -76,6 +74,11 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private String subject;
 	/** Handles the message-type header in the HTTP Publish API request */
 	private String message_type;
+	
+	private boolean login_success;
+	private JsonObject queryObject;
+	private boolean autonomous;
+	private String schema;
 
 	/** Handles the owner / entity header in the HTTP Registration API request */
 	private String requested_entity;
@@ -100,17 +103,9 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	// Used in registration API
 	/**  A RabbitMQClient Future handler to notify the caller about the status of client connection */
 	Future<RabbitMQClient> init_connection;
-	/**  A RabbitMQClient Future handler to notify the caller about the status of the requested exchange creation */
-	Future<RabbitMQClient>  completed_exchange_entry_creation;
-	/**  A RabbitMQClient Future handler to notify the caller about the status of the requested queue creation */
-	Future<RabbitMQClient>  completed_queue_entry_creation;
-	/**  A RabbitMQClient Future handler to notify the caller about the status of entity verification */
-	Future<String> entity_verification;
-	/**  A RabbitMQClient Future handler to notify the caller about the status of the requested exchange deletion */
-	Future<RabbitMQClient>  completed_exchange_entry_deletion;
-	/**  A RabbitMQClient Future handler to notify the caller about the status of the requested queue deletion */
-	Future<RabbitMQClient>  completed_queue_entry_deletion;
 	
+	Future<Void> entity_verification;
+
 	// Used in publish API
 	/**  A RabbitMQClient configuration handler to modify connection parameters */
 	RabbitMQOptions broker_config;
@@ -127,65 +122,19 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	/**  Handles the virtual host to be used to connect with RabbitMQ server */
 	public static String broker_vhost;
 	
-	// IUDX Base Path
-	/**  Defines the API server base path */
-	private static final String PATH_BASE = "/api/";
+	private static final String PASSWORDCHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-";
 	
-	// IUDX API version
-	/**  Defines the version of API */
-	private static final String PATH_VERSION_1_0_0 = "1.0.0";
-	
-	// IUDX APIs
-	/**  Defines the Publish API endpoint */
-	private static final String PATH_PUBLISH = "/publish";
-	private static final String PATH_SUBSCRIBE = "/subscribe";
-	/**  Defines the registration API endpoint */
-	private static final String PATH_REGISTER = "/register";
-	/**  Defines the owner registration API endpoint */
-	private static final String PATH_REGISTER_OWNER = "/register-owner";
-	/**  Defines the entity blocking API endpoint */
-	private static final String PATH_BLOCK_ENTITY = "/block";
-	/**  Defines the entity un-blocking API endpoint */
-	private static final String PATH_UNBLOCK_ENTITY = "/unblock";
-	
-	
-	// IUDX APIs ver. 1.0.0
-	/**  Defines the Publish API (1.0.0) endpoint */
-	private static final String PATH_PUBLISH_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_PUBLISH;
-	private static final String PATH_SUBSCRIBE_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_SUBSCRIBE;
-	/**  Defines the Registration API (1.0.0) endpoint */
-	private static final String PATH_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER;
-	/**  Defines the Owner Registration API (1.0.0) endpoint */
-	private static final String PATH_OWNER_REGISTRATION_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_REGISTER_OWNER;
-	/**  Defines the Entity Blocking API (1.0.0) endpoint */
-	private static final String PATH_BLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_BLOCK_ENTITY;
-	/**  Defines the Entity Un-Blocking API (1.0.0) endpoint */
-	private static final String PATH_UNBLOCK_ENTITY_version_1_0_0 = PATH_BASE+PATH_VERSION_1_0_0+PATH_UNBLOCK_ENTITY;
-	
-	
-	// Used in registration API to connect with PostgresQL
-	/**  A PostgresQL client pool to handle database connection */
-	private PgPool database_client;
-	/**  A PostgresQL handle for reading rows from the result set */
-	private Tuple row;
-	/**  A PostgresQL handle for iterating the result set of the executed Query */
-	private PgIterator<Row> resultSet;
-	/** A PostgresQL PgPoolOptions handle for configuring the connection parameters */
-	private PgPoolOptions options;
 	
 	// Used in registration API for apikey generation
 	/**  Characters to be used by APIKey generator while generating apikey */
-	private static final String PASSWORDCHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-";
+	
 	/** Handles the generated apikey for the HTTP Registration API request */
-	private String apikey;
+	private String generated_apikey;
 	/** Handles the generated apikey hash for the HTTP Registration API request */
 	private String apikey_hash;
 	/** Handles the generated apikey hash (in bytes) for the HTTP Registration API request */
 	private byte[] hash;
 	/** A MessageDigest object used for creating the apikey hash */
-	private MessageDigest digest;
-	/** A boolean variable (FLAG) used for handling the state of the MessageDigest object */
-	private boolean initiated_digest = false;
 	
 	// Used in subscribe API
 	/**  Handles the read data object for HTTP subscribe request */
@@ -223,30 +172,6 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 * @exception Exception On setup or start error.
 	 * @see Exception
 	 */
-
-	public static void main(String[] args) throws Exception {
-		/**  Defines the number of processors available in the server */
-		int procs = Runtime.getRuntime().availableProcessors();
-		vertx = Vertx.vertx();
-		vertx.exceptionHandler(err -> {
-			err.printStackTrace();
-		});
-
-		vertx.deployVerticle(apiserver.class.getName(), new DeploymentOptions().setWorker(true).setInstances(procs * 2),
-				event -> {
-					if (event.succeeded()) {
-						System.out.println("IUDX Vert.x API Server is started!");
-					} else {
-						System.out.println("Unable to start IUDX Vert.x API Server " + event.cause());
-					}
-				});
-		
-		broker_url = URLs.getBrokerUrl();
-		broker_port = URLs.getBrokerPort();
-		broker_vhost = URLs.getBrokerVhost();
-		broker_username = URLs.getBrokerUsername();
-		broker_password = URLs.getBrokerPassword();
-	}
 	
 	/**
 	 * This method is used to setup certificates for enabling HTTPs in Vert.x
@@ -260,40 +185,68 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 */
 	
 	@Override
-	public void start() throws Exception {
+	public void start(Future<Void> startFuture) throws Exception 
+	{
 		/**  Defines the port at which the apiserver should run */
-		int port = 8443;
-		server = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
-				.setKeyStoreOptions(new JksOptions().setPath("my-keystore.jks").setPassword("password")));
-		server.requestHandler(apiserver.this).listen(port);
+		
+		int port 			= 8443;
+		
+		broker_url 			= URLs.getBrokerUrl();
+		broker_port 		= URLs.getBrokerPort();
+		broker_vhost 		= URLs.getBrokerVhost();
+		broker_username 	= URLs.getBrokerUsername();
+		broker_password 	= URLs.getBrokerPassword();
+		
+		queryObject			= new JsonObject();
+		login_success		= false;
+		autonomous 			= false;
+		
+		HttpServer server 	= vertx.createHttpServer(new HttpServerOptions()
+									.setSsl(true)
+									.setKeyStoreOptions(new JksOptions()
+									.setPath("my-keystore.jks")
+									.setPassword("password")));
+		
 		HttpHeaders.createOptimized(
-				java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now()));
+						java.time.format
+						.DateTimeFormatter
+						.RFC_1123_DATE_TIME
+						.format(java.time.ZonedDateTime.now()));
+		
 		vertx.setPeriodic(1000, handler -> {
 			HttpHeaders.createOptimized(
-					java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now()));
+						java.time.format
+						.DateTimeFormatter
+						.RFC_1123_DATE_TIME
+						.format(java.time.ZonedDateTime.now()));
 		});
 		
-		options = new PgPoolOptions();
-		options.setDatabase(URLs.psql_database_name);
-		options.setHost(URLs.psql_database_url); 
-		options.setPort(URLs.psql_database_port);
-		options.setUsername(URLs.psql_database_username);
-		options.setPassword(URLs.psql_database_password);
-		options.setCachePreparedStatements(true);
-		options.setMaxSize(5);
+		server
+			.requestHandler(apiserver.this)
+			.listen(port, ar -> {
+				
+				if(ar.succeeded())
+				{
+					startFuture.complete();
+				}
+				else
+				{
+					startFuture.fail(ar.cause());
+				}
+			});
+		
+		//int procs = Runtime.getRuntime().availableProcessors();
+
+		vertx.exceptionHandler(err -> {
+			err.printStackTrace();
+		});
+		
 	}
 	
 	@Override
 	public void stop() {
 		if (server != null)
 			server.close();
-	}
-
-	
-	@Override
-	public void run() {
-		
-		
 	}
 	
 	/**
@@ -306,59 +259,101 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 */
 
 	@Override
-	public void handle(HttpServerRequest event) {
-		switch (event.path()) {
-		case PATH_OWNER_REGISTRATION_version_1_0_0:
-			if(event.method().toString().equalsIgnoreCase("POST")) {
-				register_owner(event);
+	public void handle(HttpServerRequest event) 
+	{
+		switch (event.path()) 
+		{
+			case "/admin/register-owner":
+			
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					register_owner(event);
+					break;
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+	
+			case "/admin/deregister-owner":
+			
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					de_register_owner(event);
+				}
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
 				break;
-			} else if(event.method().toString().equalsIgnoreCase("DELETE")) {
-				de_register_owner(event);
+		
+			case "/entity/publish":
+				publish(event);
 				break;
-			} else {
-				resp = event.response();
-				resp.setStatusCode(404).end();
+		
+			case "/entity/subscribe":
+				subscribe(event);
 				break;
-			}
-		case PATH_PUBLISH_version_1_0_0:
-			publish(event);
-			break;
-		case PATH_SUBSCRIBE_ENTITY_version_1_0_0:
-			subscribe(event);
-			break;
-		case PATH_REGISTRATION_version_1_0_0:
-			if(event.method().toString().equalsIgnoreCase("POST")) {
-				register(event);
+		
+			case "/owner/register-entity":
+			case "/admin/register-entity":
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					register(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
 				break;
-			} else if(event.method().toString().equalsIgnoreCase("DELETE")) {
-				de_register(event);
+			
+			case "/owner/deregister-entity":
+			case "/admin/deregister-entity":
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					de_register(event);
+				}
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
 				break;
-			} else {
-				resp = event.response();
-				resp.setStatusCode(404).end();
+				
+			case "/owner/block":
+			case "/admin/block":
+			
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					block(event, true, false);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
 				break;
-			}
-		case PATH_BLOCK_ENTITY_version_1_0_0:
-			if(event.method().toString().equalsIgnoreCase("POST")) {
-				block(event, true, false);
+				
+			case "/owner/unblock":
+			case "/admin/unblock":
+			
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					block(event, false, true);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
 				break;
-			} else {
-				resp = event.response();
-				resp.setStatusCode(404).end();
-				break;
-			}
-		case PATH_UNBLOCK_ENTITY_version_1_0_0:
-			if(event.method().toString().equalsIgnoreCase("POST")) {
-				block(event, false, true);
-				break;
-			} else {
-				resp = event.response();
-				resp.setStatusCode(404).end();
-				break;
-			}
 		}
 	}
-	
 	
 	/**
 	 * This method is the implementation of owner Registration API, which handles
@@ -370,169 +365,142 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 *         incoming request.
 	 */
 	
-	private void register_owner(HttpServerRequest req) {
-		resp = req.response();
-		database_client = PgClient.pool(vertx, options);
-		requested_id = req.getHeader("id");
-		if (!requested_id.equalsIgnoreCase("admin")) {
-			resp.setStatusCode(401).end();
+	private void register_owner(HttpServerRequest req) 
+	{
+		HttpServerResponse resp		= req.response();
+		String id 					= req.getHeader("id");
+		String apikey 				= req.getHeader("apikey");
+		String owner_name 			= req.getHeader("owner");
+		
+		if(		(id == null)
+					||
+			  (apikey == null)
+					||
+			(owner_name == null)
+		)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+		}
+		
+		if (!id.equalsIgnoreCase("admin")) 
+		{
+			resp.setStatusCode(403).end();
 			return;
-		} else {
-		requested_apikey = req.getHeader("apikey");
-		requested_entity = req.getHeader("owner");
-
-		// Check if owner has a '/' in ID
-		if (requested_entity.contains("/")) {
-			resp.setStatusCode(401).end();
+		}
+		
+		//TODO: Add a valid regex
+		if(owner_name.matches("[^a-z]+"))
+		{
+			resp.setStatusCode(400).end("Owner name is invalid");
+		}
+		
+		if (owner_name.contains("/")) 
+		{
+			resp.setStatusCode(403).end();
 			return;
-		} else {
-			connection_pool_id = requested_id + requested_apikey;
-			// Check if ID already exists
-			entity_already_exists = false;
-			entity_verification = verifyentity(requested_entity);
-			entity_verification.setHandler(entity_verification_handler -> {
-				if (entity_verification_handler.succeeded()) {
-					if (entity_already_exists) {
-						message = new JsonObject();
-						message.put("conflict", "Owner ID already used");
-						resp.setStatusCode(409).end(message.toString());
-						return;
-					} else {
-						database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
-								database_response -> {
-									if (database_response.succeeded()) {
-										resultSet = database_response.result().iterator();
-										if (!resultSet.hasNext()) {
-											resp.setStatusCode(404).end();
-											return;
-										}
+		} 
+		
+		// Check if ID already exists
+		entity_already_exists = false;
+		entity_verification = verifyentity(requested_entity);
+		entity_verification.setHandler(entity_verification_handler -> {
+				
+		if (entity_verification_handler.succeeded()) 
+		{
+			if (entity_already_exists) 
+			{
+				message = new JsonObject();
+				message.put("conflict", "Owner ID already used");
+				resp.setStatusCode(409).end(message.toString());
+				return;
+			} 
+			else 
+			{
+				login_success 				= false;
+				Future<Void> login_check 	= check_login(id,apikey);
+							
+				login_check.setHandler(ar -> {
+								
+				if(ar.succeeded())
+				{
+					if(login_success==true)
+					{
+						Future<Void> get_credentials=generate_credentials(owner_name, 
+																			"{}", 
+																			"true");
+						
+						get_credentials.setHandler(result -> {
+											
+						if(result.succeeded())
+						{
+							DeliveryOptions brokerOptions = new DeliveryOptions()
+															.addHeader("action", "create-owner-resources");
+									
+							vertx.eventBus().send("broker.queue", 
+								new JsonObject().put("id", owner_name),
+								brokerOptions,
+								reply -> {
+											
+							if(reply.succeeded())
+							{
+								JsonObject status = (JsonObject) reply.result().body();
+												
+								if(status.getString("status").equals("created"))
+								{
+									DeliveryOptions bindOptions = new DeliveryOptions()
+													.addHeader("action", "create-owner-bindings");
+												
+									vertx.eventBus().send("broker.queue", 
+												new JsonObject().put("id",owner_name),
+												bindOptions, res -> {
+															
+									if(res.succeeded())
+									{
+										JsonObject bindStatus = (JsonObject) res.result().body();
+												
+										if(bindStatus.getString("status").equals("bound"))
+										{
+											JsonObject response = new JsonObject();
+											response.put("id", owner_name);
+											response.put("apikey", generated_apikey);
+											
+											resp.setStatusCode(200).end(response.toString());
+										}														
 									}
-									row = resultSet.next();
-									generate_hash(requested_apikey);
-
-									// Check the hash of admin with the hash in DB
-
-									if (row.getString(1).equalsIgnoreCase(apikey_hash)
-											&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
-										generate_apikey();
-										if (!rabbitpool.containsKey(connection_pool_id)) {
-											init_connection = getRabbitMQClient(connection_pool_id, requested_id,
-													requested_apikey);
-											init_connection.setHandler(init_connection_handler -> {
-												if (init_connection_handler.succeeded()) {
-													client = rabbitpool.get(connection_pool_id);
-													completed_exchange_entry_creation = createOwnerExchangeEntries();
-													completed_queue_entry_creation = createOwnerQueueEntries();
-													completed_exchange_entry_creation
-															.setHandler(completed_exchange_entry_creation_handler -> {
-																if (completed_exchange_entry_creation_handler
-																		.succeeded()) {
-																	completed_queue_entry_creation.setHandler(
-																			completed_queue_entry_creation_handler -> {
-																				if (completed_queue_entry_creation_handler
-																						.succeeded()) {
-																					Future<RabbitMQClient> completed_binding = createOwnerBindings();
-																					completed_binding.setHandler(
-																							completed_binding_handler -> {
-																								if (completed_binding_handler
-																										.succeeded()) {
-																									database_client
-																											.preparedQuery(
-																													"INSERT INTO USERS VALUES ('"
-																															+ requested_entity
-																															+ "','"
-																															+ apikey_hash
-																															+ "',null,'"
-																															+ hash
-																															+ "','f','t')",
-																													write_res -> {
-																														if (write_res
-																																.succeeded()) {
-																															message = new JsonObject();
-																															message.put(
-																																	"id",
-																																	requested_entity);
-																															message.put(
-																																	"apikey",
-																																	apikey);
-																															resp.setStatusCode(
-																																	200)
-																																	.end(message
-																																			.toString());
-																															return;
-																														}
-																													});
-																								}
-																							});
-																				}
-																			});
-																}
-															});
-												}
-											});
-										} else {
-											client = rabbitpool.get(connection_pool_id);
-											completed_exchange_entry_creation = createOwnerExchangeEntries();
-											completed_queue_entry_creation = createOwnerQueueEntries();
-											completed_exchange_entry_creation
-													.setHandler(completed_exchange_entry_creation_handler -> {
-														if (completed_exchange_entry_creation_handler.succeeded()) {
-															completed_queue_entry_creation.setHandler(
-																	completed_queue_entry_creation_handler -> {
-																		if (completed_queue_entry_creation_handler
-																				.succeeded()) {
-																			Future<RabbitMQClient> completed_binding = createOwnerBindings();
-																			completed_binding.setHandler(
-																					completed_binding_handler -> {
-																						if (completed_binding_handler
-																								.succeeded()) {
-																							database_client
-																									.preparedQuery(
-																											"INSERT INTO USERS VALUES ('"
-																													+ requested_entity
-																													+ "',' "
-																													+ apikey_hash
-																													+ "',null,'"
-																													+ hash
-																													+ "','f','t')",
-																											write_res -> {
-																												if (write_res
-																														.succeeded()) {
-																													message.put(
-																															"id",
-																															requested_entity);
-																													message.put(
-																															"apikey",
-																															apikey);
-																													resp.setStatusCode(
-																															200)
-																															.end(message
-																																	.toString());
-																													return;
-																												}
-																											});
-																						}
-																					});
-																		}
-																	});
-														}
-													});
-										}
-									} else {
-										resp.setStatusCode(401).end();
-										return;
+									else
+									{
+											resp.setStatusCode(500).end("could not create bindings");		
 									}
 								});
-					}
-				} else {
-					resp.setStatusCode(404).end();
-					return;
+								}
+								else
+								{
+										resp.setStatusCode(500).end("could not create exchanges and queues");
+								}
+							}
+							});				
+						}
+						else
+						{
+							resp.setStatusCode(500).end(result.cause().toString());
+						}				
+					});
 				}
-			});
+				else
+				{
+					resp.setStatusCode(403).end("Invalid ID or Apikey");
+				}
+			}
+		});
+		}		
+	} 
+		else 
+		{
+					resp.setStatusCode(500).end();
+					return;
 		}
-		}
-	}
-	
+	});
+}
 	
 	/**
 	 * This method is the implementation of owner De-Registration API, which handles
@@ -544,132 +512,213 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 *         incoming request.
 	 */
 	
-	private void de_register_owner(HttpServerRequest req) {
-
-		resp = req.response();
-		database_client = PgClient.pool(vertx, options);
-		requested_id = req.getHeader("id");
-		if (!requested_id.equalsIgnoreCase("admin")) {
-			resp.setStatusCode(401).end();
-			return;
-		} else {
-		requested_apikey = req.getHeader("apikey");
-		requested_entity = req.getHeader("owner");
-
-		// Check if owner has a '/' in ID
-		if (requested_entity.contains("/")) {
-			resp.setStatusCode(401).end();
-			return;
-		} else {
-			connection_pool_id = requested_id + requested_apikey;
-			// Check if ID already exists
-			entity_already_exists = true;
-			entity_verification = verifyentity(requested_entity);
-			entity_verification.setHandler(entity_verification_handler -> {
-				if (entity_verification_handler.succeeded()) {
-					if (! entity_already_exists) {
-						message = new JsonObject();
-						message.put("failure", "Owner ID not found");
-						resp.setStatusCode(401).end(message.toString());
-						return;
-					} else {
-						database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
-								database_response -> {
-									if (database_response.succeeded()) {
-										resultSet = database_response.result().iterator();
-										if (!resultSet.hasNext()) {
-											resp.setStatusCode(404).end();
-											return;
-										}
-									}
-									row = resultSet.next();
-									generate_hash(requested_apikey);
-
-									// Check the hash of admin with the hash in DB
-
-									if (row.getString(1).equalsIgnoreCase(apikey_hash)
-											&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
-										if (!rabbitpool.containsKey(connection_pool_id)) {
-											init_connection = getRabbitMQClient(connection_pool_id, requested_id,
-													requested_apikey);
-											init_connection.setHandler(init_connection_handler -> {
-												if (init_connection_handler.succeeded()) {
-													client = rabbitpool.get(connection_pool_id);
-													completed_exchange_entry_deletion = deleteOwnerExchangeEntries();
-													completed_queue_entry_deletion = deleteOwnerQueueEntries();
-													completed_exchange_entry_deletion
-															.setHandler(completed_exchange_entry_deletion_handler -> {
-																if (completed_exchange_entry_deletion_handler
-																		.succeeded()) {
-																	completed_queue_entry_deletion.setHandler(
-																			completed_queue_entry_deletion_handler -> {
-																				if (completed_queue_entry_deletion_handler
-																						.succeeded()) {
-																					database_client
-																							.preparedQuery(
-																									"DELETE FROM USERS WHERE ID = '"
-																											+ requested_entity
-																											+ "'",
-																									delete_res -> {
-																										if (delete_res
-																												.succeeded()) {
-																											resp.setStatusCode(
-																													200)
-																													.end();
-																											return;
-																										}
-																									});
-																				}
-																			});
-																}
-															});
-												}
-											});
-										} else {
-											client = rabbitpool.get(connection_pool_id);
-											completed_exchange_entry_deletion = deleteOwnerExchangeEntries();
-											completed_queue_entry_deletion = deleteOwnerQueueEntries();
-											completed_exchange_entry_deletion
-													.setHandler(completed_exchange_entry_deletion_handler -> {
-														if (completed_exchange_entry_deletion_handler
-																.succeeded()) {
-															completed_queue_entry_deletion.setHandler(
-																	completed_queue_entry_deletion_handler -> {
-																		if (completed_queue_entry_deletion_handler
-																				.succeeded()) {
-																			database_client
-																					.preparedQuery(
-																							"DELETE FROM USERS WHERE ID = '"
-																									+ requested_entity
-																									+ "'",
-																							delete_res -> {
-																								if (delete_res
-																										.succeeded()) {
-																									resp.setStatusCode(
-																											200)
-																											.end();
-																									return;
-																								}
-																							});
-																		}
-																	});
-														}
-													});
-										}
-									} else {
-										resp.setStatusCode(401).end();
-										return;
-									}
-								});
-					}
-				} else {
-					resp.setStatusCode(404).end();
-					return;
-				}
-			});
+	//TODO: deregister owner has to be async
+	//TODO: Handle all errors correctly
+	//TODO: Add script to remove zombie entries in postgres as well as broker (in case async deregister fails)
+	
+	private void de_register_owner(HttpServerRequest req) 
+	{
+		HttpServerResponse resp		= req.response();
+		String id 					= req.getHeader("id");
+		String apikey 				= req.getHeader("apikey");
+		String owner_name 			= req.getHeader("owner");
+		
+		if(		(id == null)
+					||
+			  (apikey == null)
+					||
+			(owner_name == null)
+		)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
 		}
+		
+		if (!id.equalsIgnoreCase("admin")) 
+		{
+			resp.setStatusCode(403).end();
+			return;
+		}
+		
+		//TODO: Add a valid regex
+		if(owner_name.matches("[^a-z]+"))
+		{
+			resp.setStatusCode(400).end("Owner name is invalid");
+		}
+		
+		if (owner_name.contains("/")) 
+		{
+			resp.setStatusCode(403).end();
+			return;
+		} 
+		
+		// Check if ID already exists
+		entity_already_exists = true;
+		entity_verification = verifyentity(owner_name);
+		entity_verification.setHandler(entity_verification_handler -> {
+		
+		if (entity_verification_handler.succeeded()) 
+		{
+			if (! entity_already_exists) 
+			{
+				message = new JsonObject();
+				message.put("failure", "Owner ID not found");
+				resp.setStatusCode(401).end(message.toString());
+				return;
+			} 
+			else 
+			{
+				login_success = false;
+				Future<Void> login_check 	= check_login(id,apikey);
+				
+				login_check.setHandler(ar -> {
+					
+				if(ar.succeeded())
+				{
+					if(login_success==true)
+					{
+						System.out.println("login ok");
+						DeliveryOptions options = new DeliveryOptions()
+												  .addHeader("action", 
+												  "delete-owner-resources");	
+					
+					vertx.eventBus().send("broker.queue", new JsonObject().put("id", owner_name), options, reply -> {
+						
+					if(reply.succeeded())
+					{
+						JsonObject result = (JsonObject)reply.result().body();
+						
+						if(result.getString("status").equals("deleted"))
+						{
+							System.out.println("delete ok");
+							DeliveryOptions pgOptions = new DeliveryOptions().addHeader("action", "delete-query");
+							
+							// owner name like 'owner/%%' 
+							// exchange name like 'owner/%%'
+							
+							//TODO: Delete from follow table too
+							
+							String acl_query 	= "DELETE FROM acl WHERE"	+
+										    	" from_id LIKE '"		+	
+										    	owner_name				+	
+										    	"/%%'"					+
+										    	" OR exchange LIKE '"	+
+										    	owner_name				+
+										    	"/%%'";
+							
+							//TODO: Add logger for debug statements
+							
+							System.out.println("Query = " + acl_query);
+											
+							
+							vertx.eventBus().send("db.queue", new JsonObject().put("query", acl_query),
+													pgOptions, pgReply -> {
+														
+							if(pgReply.succeeded())
+							{
+								System.out.println("query ok");
+								JsonObject queryResult = (JsonObject)pgReply.result().body();
+								
+								System.out.println("query status = " + queryResult.getString("status"));
+								
+								if(queryResult.getString("status").equals("success"))
+								{
+									String entity_query 	= "SELECT * FROM users WHERE"	+
+									    					  " id LIKE '"					+	
+									    					  owner_name					+	
+									    					  "/%%'";
+									
+									String columns 			= "id";
+									
+									System.out.println("Query = " + entity_query);
+									
+									JsonObject params = new JsonObject();
+									
+									params.put("query", entity_query);
+									params.put("columns", columns);
+									
+									DeliveryOptions entityOptions = new DeliveryOptions()
+																	.addHeader("action", "select-query");
+								
+									vertx.eventBus().send("db.queue", params, entityOptions, 
+											res -> {
+										
+									if(res.succeeded())
+									{
+										JsonObject resultJson 	= (JsonObject)res.result().body();
+										
+										System.out.println("result = " + resultJson.toString());
+										
+										String id_list	 	= resultJson
+																	.getJsonObject("result")
+																	.getString("id");
+										
+										DeliveryOptions brokerOptions = new DeliveryOptions()
+																		.addHeader("action", "delete-owner-entities");
+										
+										vertx.eventBus().send("broker.queue", new JsonObject().put("id_list", id_list),
+															brokerOptions,
+															brokerResult -> {
+																
+										if(brokerResult.succeeded())
+										{
+											String user_query 	= "DELETE FROM users WHERE"	+
+							    					  			  " id LIKE '"				+	
+							    					  			  owner_name				+	
+							    					  			  "/%%'"					+
+							    					  			  " OR id LIKE '"			+
+							    					  			  owner_name				+
+							    					  			  "'";
+											
+											DeliveryOptions userDeleteOptions = new DeliveryOptions()
+																				.addHeader("action", "delete-query");
+											
+											vertx.eventBus().send("db.queue", 
+															 new JsonObject().put("query", user_query),
+															 userDeleteOptions,
+															 userDeleteRes -> {
+											
+											if(userDeleteRes.succeeded())
+											{
+												resp.setStatusCode(200).end();
+											}
+											else
+											{
+												resp.setStatusCode(500).end();
+											}
+																 
+															 			});
+
+										}
+										else
+										{
+											resp.setStatusCode(500).end();
+										}
+																			});									
+									}
+									});
+								}
+							}
+						});
+						}
+					}
+					else
+					{
+						resp.setStatusCode(500).end("Falied to delete owner");
+					}
+						
+					});
+				}
+				else
+				{
+					resp.setStatusCode(403).end("Invalid id or apikey");
+				}
+			}
+			});
+				
 		}
 	}
+	});
+}
 	
 	/**
 	 * This method is the implementation of entity Registration API, which handles
@@ -681,177 +730,137 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 *         incoming request.
 	 */
 
-	private void register(HttpServerRequest req) {
-
-		resp = req.response();
-		database_client = PgClient.pool(vertx, options);
-		requested_id = req.getHeader("id");
-
+	private void register(HttpServerRequest req) 
+	{
+		HttpServerResponse resp		= req.response();
+		String id 					= req.getHeader("id");
+		String apikey		 		= req.getHeader("apikey");
+		String entity 				= req.getHeader("entity");
+		String is_autonomous		= req.getHeader("is-autonomous");
+		String full_entity_name		= id	+ "/" 	+ entity;
+		
+		//TODO: Check if body is null
+		req.bodyHandler(body -> {
+			schema = body.toString();
+		});	
+		
+		if(	  (id == null)
+				  ||
+			(apikey == null)
+				  ||
+			(entity == null)
+		)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+		}
+		
+		//TODO: Add appropriate field checks. E.g. valid owner, valid entity etc.
 		// Check if ID is owner
-		if (requested_id.contains("/")) {
+		if (id.contains("/")) 
+		{
 			resp.setStatusCode(401).end();
 			return;
-		} else {
-			requested_apikey = req.getHeader("apikey");
-			requested_entity = req.getHeader("entity");
-			connection_pool_id = requested_id + requested_apikey;
-			registration_entity_id = requested_id + "/" + requested_entity;
-
+		} 
+		else 
+		{	
 			// Check if ID already exists
 			entity_already_exists = false;
-			entity_verification = verifyentity(registration_entity_id);
+			entity_verification = verifyentity(full_entity_name);
 
 			entity_verification.setHandler(entity_verification_handler -> {
 
-				if (entity_verification_handler.succeeded()) {
-					if (entity_already_exists) {
-						message = new JsonObject();
-						message.put("conflict", "entity ID already used");
-						resp.setStatusCode(409).end(message.toString());
-						return;
-					} else {
-						database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
-								database_response -> {
-									if (database_response.succeeded()) {
-										resultSet = database_response.result().iterator();
-										if (!resultSet.hasNext()) {
-											resp.setStatusCode(404).end();
-											return;
-										}
-
-										row = resultSet.next();
-										generate_hash(requested_apikey);
-
-										// Check the hash of owner with the hash in DB
-										// Check if blocked is false
-
-										if (row.getString(1).equalsIgnoreCase(apikey_hash)
-												&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
-											generate_apikey();
-											if (!rabbitpool.containsKey(connection_pool_id)) {
-												init_connection = getRabbitMQClient(connection_pool_id, requested_id,
-														requested_apikey);
-												init_connection.setHandler(init_connection_handler -> {
-													if (init_connection_handler.succeeded()) {
-														client = rabbitpool.get(connection_pool_id);
-														completed_exchange_entry_creation = createExchangeEntries();
-														completed_queue_entry_creation = createQueueEntries();
-														completed_exchange_entry_creation.setHandler(
-																completed_exchange_entry_creation_handler -> {
-																	if (completed_exchange_entry_creation_handler
-																			.succeeded()) {
-																		completed_queue_entry_creation.setHandler(
-																				completed_queue_entry_creation_handler -> {
-																					if (completed_queue_entry_creation_handler
-																							.succeeded()) {
-																						Future<RabbitMQClient> completed_binding = createBindings();
-																						completed_binding.setHandler(
-																								completed_binding_handler -> {
-																									if (completed_binding_handler
-																											.succeeded()) {
-																										database_client
-																												.preparedQuery(
-																														"INSERT INTO USERS VALUES ('"
-																																+ registration_entity_id
-																																+ "','"
-																																+ apikey_hash
-																																+ "',null,'"
-																																+ hash
-																																+ "','f','t')",
-																														write_res -> {
-																															if (write_res
-																																	.succeeded()) {
-																																message = new JsonObject();
-																																message.put(
-																																		"id",
-																																		registration_entity_id);
-																																message.put(
-																																		"apikey",
-																																		apikey);
-																																resp.setStatusCode(
-																																		200)
-																																		.end(message
-																																				.toString());
-																																return;
-																															}
-																														});
-																									}
-																								});
-
-																					}
-
-																				});
-																	}
-																});
-													}
-												});
-
-											} else {
-												client = rabbitpool.get(connection_pool_id);
-												completed_exchange_entry_creation = createExchangeEntries();
-												completed_queue_entry_creation = createQueueEntries();
-
-												completed_exchange_entry_creation
-														.setHandler(completed_exchange_entry_creation_handler -> {
-															if (completed_exchange_entry_creation_handler.succeeded()) {
-																completed_queue_entry_creation.setHandler(
-																		completed_queue_entry_creation_handler -> {
-																			if (completed_queue_entry_creation_handler
-																					.succeeded()) {
-																				Future<RabbitMQClient> completed_binding = createBindings();
-																				completed_binding.setHandler(
-																						completed_binding_handler -> {
-																							if (completed_binding_handler
-																									.succeeded()) {
-																								database_client
-																										.preparedQuery(
-																												"INSERT INTO USERS VALUES ('"
-																														+ registration_entity_id
-																														+ "',' "
-																														+ apikey_hash
-																														+ "',null,'"
-																														+ hash
-																														+ "','f','t')",
-																												write_res -> {
-																													if (write_res
-																															.succeeded()) {
-																														message.put(
-																																"id",
-																																registration_entity_id);
-																														message.put(
-																																"apikey",
-																																apikey);
-																														resp.setStatusCode(
-																																200)
-																																.end(message
-																																		.toString());
-																														return;
-																													}
-																												});
-																							}
-																						});
-																			}
-																		});
-															}
-														});
-											}
-										} else {
-											resp.setStatusCode(401).end();
-											return;
-										}
-									} else {
-										resp.setStatusCode(404).end();
-										return;
+			if (entity_verification_handler.succeeded()) 
+			{
+				if (entity_already_exists) 
+				{
+					message = new JsonObject();
+					message.put("conflict", "entity ID already used");
+					resp.setStatusCode(409).end(message.toString());
+					return;
+				} 
+				else 
+				{
+					login_success 				= false;
+					Future<Void> login_check 	= check_login(id,apikey);
+						
+					login_check.setHandler(ar -> {
+							
+					if(ar.succeeded())
+					{
+						if(login_success==true)
+						{
+							Future<Void> get_credentials=generate_credentials(full_entity_name, 
+																				schema, 
+																				is_autonomous);
+							get_credentials.setHandler(result -> {
+										
+						if(result.succeeded())
+						{
+							DeliveryOptions brokerOptions = new DeliveryOptions()
+															.addHeader("action", "create-entity-resources");
+								
+							vertx.eventBus().send("broker.queue", 
+									new JsonObject().put("id", full_entity_name),
+									brokerOptions,
+									reply -> {
+										
+							if(reply.succeeded())
+							{
+								JsonObject status = (JsonObject) reply.result().body();
+											
+								if(status.getString("status").equals("created"))
+								{
+									DeliveryOptions bindOptions = new DeliveryOptions()
+											.addHeader("action", "create-entity-bindings");
+											
+									vertx.eventBus().send("broker.queue", 
+											new JsonObject().put("id",full_entity_name),
+											bindOptions, res -> {
+														
+									if(res.succeeded())
+									{
+										JsonObject bindStatus = (JsonObject) res.result().body();
+											
+										if(bindStatus.getString("status").equals("bound"))
+										{
+											JsonObject response = new JsonObject();
+											response.put("id", full_entity_name);
+											response.put("apikey", generated_apikey);
+										
+											resp.setStatusCode(200).end(response.toString());
+										}														
+									}
+									else
+									{
+											resp.setStatusCode(500).end("could not create bindings");		
 									}
 								});
-
+									}
+									else
+									{
+										resp.setStatusCode(500).end("could not create exchanges and queues");
+									}
+								}
+							});				
+						}
+						else
+						{
+							resp.setStatusCode(500).end(result.cause().toString());
+						}				
+					});
+				}
+					else
+					{
+						resp.setStatusCode(403).end("login failed");
 					}
-
 				}
 			});
+						
+			}
 		}
-	}
-	
+	});
+  }
+}
 	/**
 	 * This method is the implementation of entity De-Registration API, which handles
 	 * the device or application de-registration requests by owners.
@@ -862,144 +871,170 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 *         incoming request.
 	 */
 	
-	private void de_register(HttpServerRequest req) {
-
-		resp = req.response();
-		database_client = PgClient.pool(vertx, options);
-		requested_id = req.getHeader("id");
+	private void de_register(HttpServerRequest req) 
+	{
+		System.out.println("in deregister entity");
+		HttpServerResponse resp = req.response();
+		String id 				= req.getHeader("id");
+		String apikey			= req.getHeader("apikey");
+		String entity			= req.getHeader("entity");
 
 		// Check if ID is owner
-		if (requested_id.contains("/")) {
-			resp.setStatusCode(401).end();
+		if (id.contains("/")) 
+		{
+			resp.setStatusCode(403).end();
 			return;
-		} else {
-			requested_apikey = req.getHeader("apikey");
-			requested_entity = req.getHeader("entity");
-			// Check if entity header contains a '/'
-			if (requested_entity.contains("/")) {
-				resp.setStatusCode(401).end();
-				return;
-			} else {
-			connection_pool_id = requested_id + requested_apikey;
-			registration_entity_id = requested_id + "/" + requested_entity;
-
-			// Check if ID already exists
-			entity_already_exists = true;
-			entity_verification = verifyentity(registration_entity_id);
+		} 
+		
+		if((!entity.startsWith(id)) || (!entity.contains("/")))
+		{
+			resp.setStatusCode(403).end();
+			return;
+		}
+		
+		else 
+		{
+			// Check if ID exists
+			entity_already_exists 	= false;
+			entity_verification 	= verifyentity(entity);
 
 			entity_verification.setHandler(entity_verification_handler -> {
 
-				if (entity_verification_handler.succeeded()) {
-					if (! entity_already_exists) {
-						message = new JsonObject();
-						message.put("failure", "Entity ID not found");
-						resp.setStatusCode(401).end(message.toString());
-						return;
-					} else {
-						database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
-								database_response -> {
-									if (database_response.succeeded()) {
-										resultSet = database_response.result().iterator();
-										if (!resultSet.hasNext()) {
-											resp.setStatusCode(404).end();
-											return;
-										}
-
-										row = resultSet.next();
-										generate_hash(requested_apikey);
-
-										// Check the hash of owner with the hash in DB
-										// Check if blocked is false
-
-										if (row.getString(1).equalsIgnoreCase(apikey_hash)
-												&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
-											
-											if (!rabbitpool.containsKey(connection_pool_id)) {
-												init_connection = getRabbitMQClient(connection_pool_id, requested_id,
-														requested_apikey);
-												init_connection.setHandler(init_connection_handler -> {
-													if (init_connection_handler.succeeded()) {
-														client = rabbitpool.get(connection_pool_id);
-														completed_exchange_entry_deletion = deleteExchangeEntries();
-														completed_queue_entry_deletion = deleteQueueEntries();
-														completed_exchange_entry_deletion.setHandler(
-																completed_exchange_entry_deletion_handler -> {
-																	if (completed_exchange_entry_deletion_handler
-																			.succeeded()) {
-																		completed_queue_entry_deletion.setHandler(
-																				completed_queue_entry_deletion_handler -> {
-																					if (completed_queue_entry_deletion_handler
-																							.succeeded()) {
-																						database_client
-																								.preparedQuery(
-																										"DELETE FROM USERS WHERE ID = '"
-																												+ registration_entity_id
-																												+ "'",
-																										delete_res -> {
-																											if (delete_res
-																													.succeeded()) {
-																												resp.setStatusCode(
-																														200)
-																														.end();
-																												return;
-																											}
-																										});
-																					}
-																				});
-																	}
-																});
-													}
-												});
-
-											} else {
-												client = rabbitpool.get(connection_pool_id);
-												completed_exchange_entry_deletion = deleteExchangeEntries();
-												completed_queue_entry_deletion = deleteQueueEntries();
-												completed_exchange_entry_deletion.setHandler(
-														completed_exchange_entry_deletion_handler -> {
-															if (completed_exchange_entry_deletion_handler
-																	.succeeded()) {
-																completed_queue_entry_deletion.setHandler(
-																		completed_queue_entry_deletion_handler -> {
-																			if (completed_queue_entry_deletion_handler
-																					.succeeded()) {
-																				database_client
-																						.preparedQuery(
-																								"DELETE FROM USERS WHERE ID = '"
-																										+ registration_entity_id
-																										+ "'",
-																								delete_res -> {
-																									if (delete_res
-																											.succeeded()) {
-																										resp.setStatusCode(
-																												200)
-																												.end();
-																										return;
-																									}
-																								});
-																			}
-																		});
-															}
-														});
-											}
-										} else {
-											resp.setStatusCode(401).end();
-											return;
-										}
-									} else {
-										resp.setStatusCode(404).end();
-										return;
-									}
-								});
-
+			if (entity_verification_handler.succeeded())
+			{
+				if (! entity_already_exists) 
+				{
+					message = new JsonObject();
+					message.put("failure", "Entity ID not found");
+					resp.setStatusCode(401).end(message.toString());
+					return;
+				} 
+				else 
+				{
+					login_success = false;
+					Future<Void> login = check_login(id,apikey);
+					
+					login.setHandler(handler -> {
+						
+					if(handler.succeeded())
+					{
+						if(login_success=true)
+						{
+							System.out.println("login ok");
+							DeliveryOptions brokerOptions = new DeliveryOptions()
+															.addHeader("action", "delete-entity-resources");
+							
+							vertx.eventBus().send("broker.queue", 
+									         new JsonObject().put("id_list", entity), 
+									         brokerOptions, reply -> {
+							
+							//TODO: Bundle queries in other APIs too		        	 
+							if(reply.succeeded())
+							{
+								System.out.println("broker delete ok");
+								
+								String acl_query = "DELETE FROM acl WHERE "		+
+											   	   "from_id = '"				+
+											       entity						+
+											       "' OR exchange LIKE '"		+
+											       entity						+
+											       ".%%'"						;
+								
+								DeliveryOptions pgAclOptions = new DeliveryOptions()
+										.addHeader("action", "delete-query");
+								
+								vertx.eventBus().send("db.queue", 
+										 new JsonObject().put("query", acl_query), 
+										 pgAclOptions, 
+										 result -> {
+										 
+						if(result.succeeded())
+						{
+							JsonObject aclDeleteResult = (JsonObject)result.result().body();
+							
+							if(aclDeleteResult.getString("status").equals("success"))
+							{
+								DeliveryOptions pgFollowOptions = new DeliveryOptions()
+										.addHeader("action", "delete-query");
+								
+								String follow_query = "DELETE FROM follow WHERE "	+
+										   			  " requested_by = '"			+
+										   			  entity						+
+										   			  "' OR exchange LIKE '"		+
+										   			  entity						+
+										   			  ".%%'"						;
+								
+								vertx.eventBus().send("db.queue", 
+										 new JsonObject().put("query", follow_query), 
+										 pgFollowOptions, 
+										 follow_result -> {
+										 
+						if(follow_result.succeeded())
+						{
+							JsonObject followDeleteResult = (JsonObject)follow_result.result().body();
+							
+							if(followDeleteResult.getString("status").equals("success"))
+							{
+								DeliveryOptions pgUserOptions = new DeliveryOptions()
+										.addHeader("action", "delete-query");
+								
+								String user_query = "DELETE FROM users WHERE "	+
+										           " id = '"					+
+										           entity						+
+										           "'"							;
+								
+								vertx.eventBus().send("db.queue", 
+										 new JsonObject().put("query", user_query), 
+										 pgFollowOptions, 
+										 user_result -> {
+											 
+						if(user_result.succeeded())
+						{
+							JsonObject userDeleteResult = (JsonObject)follow_result.result().body();
+							
+							if(userDeleteResult.getString("status").equals("success"))
+							{
+								resp.setStatusCode(200).end();
+							}
+						}
+						else
+						{
+							resp.setStatusCode(500).end("Could not delete from user table");
+						}
+										 });
+							}
+						}
+						else
+						{
+							resp.setStatusCode(500).end("Could not delete from follow");
+						}
+										 
+										 });
+							}
+						}
+						else
+						{
+							resp.setStatusCode(500).end("Could not delete from acl");
+						}
+										 });
+							}
+							else
+							{
+								resp.setStatusCode(500).end("Could not delete from broker");
+							}
+									      });
+						}
+						else
+						{
+							resp.setStatusCode(403).end("Invalid id or apikey");
+						}
 					}
-
+					});
 				}
+			}
 			});
 		}
-	}
-	}
-
+}
 	/**
 	 * This method is the implementation of entity Block and Un-Block API, which
 	 * handles the device or application block requests by owners.
@@ -1016,7 +1051,6 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	private void block(HttpServerRequest req, boolean block, boolean un_block) {
 
 		resp = req.response();
-		database_client = PgClient.pool(vertx, options);
 		requested_id = req.getHeader("id");
 
 		// Check if ID is owner
@@ -1048,60 +1082,14 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 							return;
 						} else {
 							
-							database_client.preparedQuery("SELECT * FROM users WHERE id = '" + requested_id + "'",
-									database_response -> {
-										if (database_response.succeeded()) {
-											resultSet = database_response.result().iterator();
-											if (!resultSet.hasNext()) {
-												resp.setStatusCode(404).end();
-												return;
-											}
-
-											row = resultSet.next();
-											generate_hash(requested_apikey);
-
-											// Check the hash of owner with the hash in DB
-											// Check if blocked is false
-
-											if (row.getString(1).equalsIgnoreCase(apikey_hash)
-													&& row.getBoolean(4).toString().equalsIgnoreCase("false")) {
-
-												if (block) {
-													database_client.preparedQuery(
-															"UPDATE users SET BLOCKED = TRUE WHERE id = '"
-																	+ registration_entity_id + "'",
-															database_update_response -> {
-																if (database_response.succeeded()) {
-																	resp.setStatusCode(200).end();
-																	return;
-																}
-															});
-												} else if (un_block) {
-													database_client.preparedQuery(
-															"UPDATE users SET BLOCKED = FALSE WHERE id = '"
-																	+ registration_entity_id + "'",
-															database_update_response -> {
-																if (database_response.succeeded()) {
-																	resp.setStatusCode(200).end();
-																	return;
-																}
-															});
-												}
-											} else {
-												resp.setStatusCode(401).end();
-												return;
-											}
-										} else {
-											resp.setStatusCode(401).end();
-											return;
-										}
-									});
-						}
+							
 					}
-				});
+					}
+					
 
-			}
+			});
 		}
+	}
 	}
 
 	/**
@@ -1114,388 +1102,39 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 *         on completion.
 	 */
 	
-	private Future<String> verifyentity(String registration_entity_id) {
-		Future<String> verifyentity = Future.future();
-		database_client.preparedQuery("SELECT * FROM users WHERE id = '"+registration_entity_id+"'", database_response -> {
-			if(database_response.succeeded()) {
-				resultSet = database_response.result().iterator();
-				if (!resultSet.hasNext()) {
-					entity_already_exists = false;
-				} else {
-					row = resultSet.next();
-					if (row.getString(0).equalsIgnoreCase(registration_entity_id) && row.getBoolean(4).toString().equalsIgnoreCase("false")) {
-						entity_already_exists = true;
-					}
-				}
-			}
-			verifyentity.complete();
-		});
-		return verifyentity;		
-	}
-
-	/**
-	 * This method is used to generate apikey using the allowed characters. Once
-	 * apikey is created, a hash of it is also created. The entries are stored in
-	 * the variables apikey, hash (as bytes) and apikey_hash (as String).
-	 * 
-	 * @param Nothing.
-	 * @return void Nothing.
-	 */
-
-	private void generate_apikey() {
-		apikey = RandomStringUtils.random(32, 0, PASSWORDCHARS.length(), true, true, PASSWORDCHARS.toCharArray());
-
-		try {
-			if(!initiated_digest) {
-			digest = MessageDigest.getInstance("SHA-256");
-			initiated_digest = true;}
-			digest.update(apikey.getBytes("UTF-8"));
-			hash = digest.digest();
-			convert_byte_to_string(hash);
-			
-		} catch (Exception e) {
-			System.out.println("UnsupportedEncodingException");
-		}
-	}
-
-	/**
-	 * This method is used to generate apikey hash from the received apikey. This is
-	 * used for validating the user. The entry is stored in the variable hash (as
-	 * bytes) and in apikey_hash (as String).
-	 * 
-	 * @param String key - The key which needs to be converted to a hash.
-	 * @return byte[] hash - The hash which can now be compared in the database.
-	 */
-
-	private byte[] generate_hash(String key) {
+	private Future<Void> verifyentity(String registration_entity_id) 
+	{
+		Future<Void> verifyentity = Future.future();		
+		String query 	= "SELECT * FROM users WHERE id = '"
+							+ registration_entity_id +	"'";
+		String columns	= "id";
 		
-		try {
-			if(!initiated_digest) {
-			digest = MessageDigest.getInstance("SHA-256");
-			initiated_digest = true;}
-			digest.update(key.getBytes("UTF-8"));
-			hash = digest.digest();
-			convert_byte_to_string(hash);
-		} catch (Exception e) {
-			System.out.println("UnsupportedEncodingException");
-		}
-		return hash;
-	}
-
-
-	/**
-	 * This method is used to convert byte (apikey) to String (apikey_hash).
-	 * 
-	 * @param byte[] hash - The hash (in bytes) which needs to be converted to a
-	 *        String.
-	 * @return void Nothing.
-	 */
-	
-	private void convert_byte_to_string(byte[] hash) {
-		StringBuilder sb = new StringBuilder();
-        for(int i=0; i< hash.length ;i++)
-        {
-            sb.append(Integer.toString((hash[i] & 0xff) + 0x100, 16).substring(1));
-        }
-        //Get complete hashed password in hex format
-        apikey_hash = sb.toString();
- 	}
-	
-	/**
-	 * This method is used to create exchanges in RabbitMQ for Owners.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> createOwnerExchangeEntries - This is a callable
-	 *         Future which notifies the caller on completion of exchange creation.
-	 */
-	
-	private Future<RabbitMQClient> createOwnerExchangeEntries() {
-		Future<RabbitMQClient> createOwnerExchangeEntries = Future.future();
-		client.exchangeDeclare(requested_entity + ".notification", "topic", true, false,
-				notification_exchange_handler -> {
-					if (notification_exchange_handler.succeeded()) {
-						createOwnerExchangeEntries.complete();
-					}
-				});
-		return createOwnerExchangeEntries;
-	}
-
-	/**
-	 * This method is used to delete exchanges in RabbitMQ for Owners.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> deleteOwnerExchangeEntries - This is a callable
-	 *         Future which notifies the caller on completion of exchange deletion.
-	 */
-	
-	private Future<RabbitMQClient> deleteOwnerExchangeEntries() {
-		Future<RabbitMQClient> deleteOwnerExchangeEntries = Future.future();
-		client.exchangeDelete(requested_entity + ".notification", notification_exchange_handler -> {
-			if (notification_exchange_handler.succeeded()) {
-				deleteOwnerExchangeEntries.complete();
+		queryObject.put("query", query);
+		queryObject.put("columns", columns);
+		
+		DeliveryOptions options = new DeliveryOptions().addHeader("action", "select-query");
+		
+		vertx.eventBus().send("db.queue", queryObject, options, reply -> {
+			
+			if(reply.succeeded())
+			{
+				JsonObject queryResult = (JsonObject)reply.result().body();
+				
+				if(queryResult.getInteger("rowCount")>0)
+				{
+					entity_already_exists 	= true;
+				}
+				else
+				{
+					entity_already_exists	= false;
+				}
+				
+				verifyentity.complete();
 			}
 		});
-		return deleteOwnerExchangeEntries;
-	}
-	
-	/**
-	 * This method is used to create queues in RabbitMQ for Owners.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> createOwnerQueueEntries - This is a callable Future
-	 *         which notifies the caller on completion of queue creation.
-	 */
-	
-	private Future<RabbitMQClient> createOwnerQueueEntries() {
-		Future<RabbitMQClient> createOwnerQueueEntries = Future.future();
-		client.queueDeclare(requested_entity + ".notification", true, false, false, notification_queue_handler -> {
-			if (notification_queue_handler.succeeded()) {
-				createOwnerQueueEntries.complete();
-
-			}
-		});
-		return createOwnerQueueEntries;
+		return verifyentity;
 	}
 
-	/**
-	 * This method is used to delete queues in RabbitMQ for Owners.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> deleteOwnerQueueEntries - This is a callable Future
-	 *         which notifies the caller on completion of queue deletion.
-	 */
-	
-	private Future<RabbitMQClient> deleteOwnerQueueEntries() {
-		Future<RabbitMQClient> deleteOwnerQueueEntries = Future.future();
-		client.queueDelete(requested_entity + ".notification", notification_queue_handler -> {
-			if (notification_queue_handler.succeeded()) {
-				deleteOwnerQueueEntries.complete();
-
-			}
-		});
-		return deleteOwnerQueueEntries;
-	}
-	
-	/**
-	 * This method is used to create bindings in RabbitMQ for Owners.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> createOwnerBindings - This is a callable Future which
-	 *         notifies the caller on completion of bindings.
-	 */
-	
-	private Future<RabbitMQClient> createOwnerBindings() {
-		Future<RabbitMQClient> createOwnerBindings = Future.future();
-		client.queueBind(requested_entity + ".notification", requested_entity + ".notification", "#",
-				queue_bind_handler -> {
-					if (queue_bind_handler.succeeded()) {
-						client.queueBind("database", requested_entity + ".notification", "#",
-								database_notification_bind_handler -> {
-									if (database_notification_bind_handler.succeeded()) {
-										createOwnerBindings.complete();
-									}
-								});
-					}
-				});
-		return createOwnerBindings;
-	}	
-	
-	/**
-	 * This method is used to create exchanges in RabbitMQ for entities.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> createExchangeEntries - This is a callable
-	 *         Future which notifies the caller on completion of exchange creation.
-	 */
-	
-	private Future<RabbitMQClient> createExchangeEntries() {
-		Future<RabbitMQClient> createExchangeEntries = Future.future();
-		client.exchangeDeclare(registration_entity_id + ".private", "topic", true, false, private_exchange_handler -> {
-			if (private_exchange_handler.succeeded()) {
-				client.exchangeDeclare(registration_entity_id + ".public", "topic", true, false, public_exchange_handler -> {
-					if (public_exchange_handler.succeeded()) {
-						client.exchangeDeclare(registration_entity_id + ".protected", "topic", true, false, protected_exchange_handler -> {
-							if (protected_exchange_handler.succeeded()) {
-								client.exchangeDeclare(registration_entity_id + ".diagnostics", "topic", true, false, diagnostics_exchange_handler -> {
-									if (diagnostics_exchange_handler.succeeded()) {
-										client.exchangeDeclare(registration_entity_id + ".notification", "topic", true, false, notification_exchange_handler -> {
-											if (notification_exchange_handler.succeeded()) {
-												client.exchangeDeclare(registration_entity_id + ".publish", "topic", true, false, publish_exchange_handler -> {
-													if (publish_exchange_handler.succeeded()) {
-														createExchangeEntries.complete();
-																											}
-																										});
-																					}
-																				});
-																	}
-																});
-													}
-												});
-									}
-								});
-					}
-				});
-		return createExchangeEntries;
-	}
-
-	/**
-	 * This method is used to delete exchanges in RabbitMQ for entities.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> deleteExchangeEntries - This is a callable
-	 *         Future which notifies the caller on completion of exchange deletion.
-	 */
-	
-	private Future<RabbitMQClient> deleteExchangeEntries() {
-		Future<RabbitMQClient> deleteExchangeEntries = Future.future();
-		client.exchangeDelete(registration_entity_id + ".private", private_exchange_handler -> {
-			if (private_exchange_handler.succeeded()) {
-				client.exchangeDelete(registration_entity_id + ".public", public_exchange_handler -> {
-					if (public_exchange_handler.succeeded()) {
-						client.exchangeDelete(registration_entity_id + ".protected", protected_exchange_handler -> {
-							if (protected_exchange_handler.succeeded()) {
-								client.exchangeDelete(registration_entity_id + ".diagnostics", diagnostics_exchange_handler -> {
-									if (diagnostics_exchange_handler.succeeded()) {
-										client.exchangeDelete(registration_entity_id + ".notification", notification_exchange_handler -> {
-											if (notification_exchange_handler.succeeded()) {
-												client.exchangeDelete(registration_entity_id + ".publish", publish_exchange_handler -> {
-													if (publish_exchange_handler.succeeded()) {
-														deleteExchangeEntries.complete();
-																											}
-																										});
-																					}
-																				});
-																	}
-																});
-													}
-												});
-									}
-								});
-					}
-				});
-		return deleteExchangeEntries;
-	}
-	
-	/**
-	 * This method is used to create queues in RabbitMQ for entities.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> createQueueEntries - This is a callable Future
-	 *         which notifies the caller on completion of queue creation.
-	 */
-	
-	private Future<RabbitMQClient> createQueueEntries() {
-		Future<RabbitMQClient> createQueueEntries = Future.future();
-		client.queueDeclare(registration_entity_id, true, false, false, queue_handler -> {
-			if(queue_handler.succeeded()) {
-				client.queueDeclare(registration_entity_id + ".private", true, false, false, private_queue_handler -> {
-					if(private_queue_handler.succeeded()) {
-						client.queueDeclare(registration_entity_id + ".priority", true, false, false, priority_queue_handler -> {
-							if(priority_queue_handler.succeeded()) {
-								client.queueDeclare(registration_entity_id + ".command", true, false, false, command_queue_handler -> {
-									if(private_queue_handler.succeeded()) {
-										client.queueDeclare(registration_entity_id + ".notification", true, false, false, notification_queue_handler -> {
-											if(notification_queue_handler.succeeded()) {
-												createQueueEntries.complete();
-												
-																			}
-																		});
-															}
-														});
-											}
-										});
-							}
-						});
-			}
-		});
-		return createQueueEntries;
-	}
-
-	/**
-	 * This method is used to delete queues in RabbitMQ for entities.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> deleteQueueEntries - This is a callable Future
-	 *         which notifies the caller on completion of queue deletion.
-	 */
-	
-	private Future<RabbitMQClient> deleteQueueEntries() {
-		Future<RabbitMQClient> deleteQueueEntries = Future.future();
-		client.queueDelete(registration_entity_id, queue_handler -> {
-			if(queue_handler.succeeded()) {
-				client.queueDelete(registration_entity_id + ".private", private_queue_handler -> {
-					if(private_queue_handler.succeeded()) {
-						client.queueDelete(registration_entity_id + ".priority", priority_queue_handler -> {
-							if(priority_queue_handler.succeeded()) {
-								client.queueDelete(registration_entity_id + ".command", command_queue_handler -> {
-									if(private_queue_handler.succeeded()) {
-										client.queueDelete(registration_entity_id + ".notification", notification_queue_handler -> {
-											if(notification_queue_handler.succeeded()) {
-												deleteQueueEntries.complete();
-												
-																			}
-																		});
-															}
-														});
-											}
-										});
-							}
-						});
-			}
-		});
-		return deleteQueueEntries;
-	}
-
-	
-	/**
-	 * This method is used to create bindings in RabbitMQ for entities.
-	 * 
-	 * @param Nothing.
-	 * @return Future<RabbitMQClient> createBindings - This is a callable Future which
-	 *         notifies the caller on completion of bindings.
-	 */
-
-	private Future<RabbitMQClient> createBindings() {
-		Future<RabbitMQClient> createBindings = Future.future();
-		client.queueBind(registration_entity_id + ".notification",
-				registration_entity_id + ".notification", "#", queue_bind_handler -> {
-			if(queue_bind_handler.succeeded()) {
-				client.queueBind(registration_entity_id + ".private",
-						registration_entity_id + ".private", "#", private_queue_bind_handler -> {
-					if(private_queue_bind_handler.succeeded()) {
-						client.queueBind("database", registration_entity_id + ".private", "#", database_private_bind_handler -> {
-							if(database_private_bind_handler.succeeded()) {
-								client.queueBind("database", registration_entity_id + ".public", "#", database_public_bind_handler -> {
-									if(database_public_bind_handler.succeeded()) {
-										client.queueBind("database", registration_entity_id + ".protected", "#", database_protected_bind_handler -> {
-											if(database_protected_bind_handler.succeeded()) {
-												client.queueBind("database", registration_entity_id + ".notification", "#", database_notification_bind_handler -> {
-													if(database_notification_bind_handler.succeeded()) {
-														client.queueBind("database", registration_entity_id + ".publish", "#", database_publish_bind_handler -> {
-															if(database_publish_bind_handler.succeeded()) {
-																client.queueBind("database", registration_entity_id + ".diagnostics", "#", database_diagnostics_bind_handler -> {
-																	if(database_diagnostics_bind_handler.succeeded()) {
-																		createBindings.complete();
-																																					}
-																																				});
-																															}
-																														});
-																									}
-																								});
-																					}
-																				});
-																	}
-																});
-													}
-												});
-									}
-								});
-					}
-				});
-		return createBindings;
-	}
-	
-	
 	/**
 	 * This method is the implementation of Publish API, which handles the
 	 * publication request by clients.
@@ -1554,52 +1193,78 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 	 * @return void - Though the return type is void, the HTTP response is written internally as per the request. 
 	 */
 	
-	private void subscribe(HttpServerRequest request) {
-		array = new JsonArray();
-		resp = request.response();
+	private void subscribe(HttpServerRequest request) 
+	{
+		array 	= new JsonArray();
+		resp 	= request.response();
+		
 		resp.setChunked(true);
-		requested_id = request.getHeader("id");
-		requested_apikey = request.getHeader("apikey");
-		message_type = request.getHeader("message-type");
-		if (message_type == null) {
+		
+		requested_id 		= request.getHeader("id");
+		requested_apikey 	= request.getHeader("apikey");
+		message_type 		= request.getHeader("message-type");
+		
+		if (message_type == null) 
+		{
 			message_type = "";
 			default_message_type = true;
-		} else {
+		} 
+		else 
+		{
 			message_type = ("." + message_type).trim();
 			default_message_type = false;
 		}
-		if (message_type.equalsIgnoreCase(".priority") || message_type.equalsIgnoreCase(".command")
-				|| message_type.equalsIgnoreCase(".notification") || message_type.equalsIgnoreCase("")) {
-
+		if ((message_type.equalsIgnoreCase(".priority")) 
+							|| 
+			(message_type.equalsIgnoreCase(".command"))
+							|| 
+			(message_type.equalsIgnoreCase(".notification"))
+							|| 
+			(message_type.equalsIgnoreCase(""))
+			)
+		{
 			count = read = 0;
 			response_written = false;
-			try {
+			
+			try 
+			{
 				num_messages = Integer.parseInt(request.getHeader("num-messages"));
-				if (num_messages > 100) {
+				
+				if (num_messages > 100) 
+				{
 					num_messages = 100;
 				}
-			} catch (Exception e) {
+			} 
+			catch (Exception e) 
+			{
 				num_messages = 10;
 			}
 
 			connection_pool_id = requested_id + requested_apikey;
 
-			if (!rabbitpool.containsKey(connection_pool_id)) {
+			if (!rabbitpool.containsKey(connection_pool_id)) 
+			{
 				broker_client = getRabbitMQClient(connection_pool_id, requested_id, requested_apikey);
 				broker_client.setHandler(broker_client_start_handler -> {
-					for (count = 1; count <= num_messages; count++) {
-						Future<RabbitMQClient> completedgetData = getData(broker_client_start_handler);
-						completedgetData.setHandler(completed_getData_handler -> {
-							if (completed_getData_handler.succeeded()) {
-								resp.setStatusCode(200).write(array + "\r\n").end();
-								response_written = true;
-								return;
-							}
-						});
+					
+				for (count = 1; count <= num_messages; count++) 
+				{
+					Future<RabbitMQClient> completedgetData = getData(broker_client_start_handler);
+					completedgetData.setHandler(completed_getData_handler -> {
+					
+					if (completed_getData_handler.succeeded()) 
+					{
+						resp.setStatusCode(200).write(array + "\r\n").end();
+						response_written = true;
+						return;
 					}
+					});
+				}
 				});
 			}
-		} else {
+		} 
+		else 
+		{
 			response = new JsonObject();
 			response.put("error", "invalid message-type");
 			resp.setStatusCode(400).write(response + "\r\n").end();
@@ -1756,6 +1421,128 @@ public class apiserver extends AbstractVerticle implements Handler<HttpServerReq
 		});
 
 		  return create_broker_client;		
+	}
+	
+	public Future<Void> generate_credentials(String id, String schema, String autonomous) 
+	{
+		Future<Void> create_credentials = Future.future();
+		
+		String apikey 	= genRandString(32);
+		String salt 	= genRandString(32);
+		String blocked 	= "f";
+		
+		String string_to_hash = apikey + salt + id;
+		String hash = Hashing.sha256().hashString(string_to_hash, StandardCharsets.UTF_8).toString();
+		
+		String query = "INSERT INTO users VALUES('"
+							+id			+	"','"
+							+hash		+	"','"
+							+schema 	+	"','"
+							+salt		+ 	"','"
+							+blocked	+	"','"
+							+autonomous +	"')";
+		
+		JsonObject queryObject = new JsonObject();
+		queryObject.put("query", query);
+		
+		DeliveryOptions options= new DeliveryOptions().addHeader("action", "insert-query");
+		
+		vertx.eventBus().send("db.queue",queryObject, options, reply -> {
+			
+			if(reply.succeeded())
+			{
+				generated_apikey = apikey;
+				create_credentials.complete();
+			}
+			else
+			{
+				create_credentials.fail(reply.cause().toString());
+			}
+
+		});
+	
+		return create_credentials;
+	}
+	
+	public String genRandString(int len)
+	{
+		String randStr = RandomStringUtils.random(len, 0, PASSWORDCHARS.length(), true, true, PASSWORDCHARS.toCharArray());
+		return randStr;
+
+	}
+	
+	public Future<Void> check_login(String id, String apikey)
+	{
+		Future<Void> check = Future.future();
+
+		if(id.equalsIgnoreCase("") || apikey.equalsIgnoreCase(""))
+		{
+			login_success = false;
+		}
+		
+		//TODO check if id conforms to the required format
+		if(!id.matches("[a-z0-9/]+"))
+		{
+			login_success = false;
+		}
+		
+		String query 		= "SELECT * FROM users WHERE id = '"
+									+	id	+ "'"
+									+	"AND blocked = 'f'";
+		
+		String columns	 	= "salt,password_hash,is_autonomous";
+		
+		queryObject.put("query", query);
+		queryObject.put("columns", columns);
+		
+		DeliveryOptions options = new DeliveryOptions().addHeader("action", "select-query");
+		
+		vertx.eventBus().send("db.queue", queryObject, options, reply -> {
+			
+			if(reply.succeeded())
+			{
+				JsonObject queryResult = (JsonObject) reply.result().body();
+				
+				if(queryResult.getInteger("rowCount")==0)
+				{
+					login_success	=	false;
+					check.complete();
+				}
+				else
+				{
+					JsonObject result 		= queryResult.getJsonObject("result");
+					
+					String salt 			= result.getString("salt");
+					String string_to_hash	= apikey+salt+id;
+					String expected_hash 	= result.getString("password_hash");
+					String actual_hash 		= Hashing
+													.sha256()
+													.hashString(string_to_hash, StandardCharsets.UTF_8)
+													.toString();
+										
+					if(actual_hash.equals(expected_hash))
+					{
+						login_success 	= true;
+						check.complete();
+					}
+					else
+					{
+						login_success	= false;
+						check.complete();
+					}
+					
+				}
+			}
+			
+		});
+		
+		return check;
+	}
+
+	public boolean is_string_safe(String resource)
+	{
+		boolean safe = (resource.length() - (resource.replaceAll("[^-/a-zA-Z0-9]", "")).length())==0?true:false;
+		return safe;
 	}
 	
 }

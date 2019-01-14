@@ -1,21 +1,21 @@
 /**
  * 
  */
-package iudx.apiserver;
+package main.java.iudx.apiserver;
 
 /**
  * @author Swaminathan Vasanth Rajaraman <swaminathanvasanth.r@gmail.com>
  *
  */
 public class URLs {
-	public static final String broker_url = "localhost";
+	public static final String broker_url = "broker";
 	public static final String broker_username = "admin";
-	public static final String broker_password = "admin@123";
+	public static final String broker_password = System.getenv("ADMIN_PWD");
 	public static final int broker_port = 5672;
 	public static final String broker_vhost = "/";
-	public static final String psql_database_url = "localhost";
+	public static final String psql_database_url = "postgres";
 	public static final String psql_database_username = "postgres";
-	public static final String psql_database_password = "admin";
+	public static final String psql_database_password = System.getenv("POSTGRES_PWD");
 	public static final int psql_database_port = 5432;
 	public static final String psql_database_name = "postgres";
 		

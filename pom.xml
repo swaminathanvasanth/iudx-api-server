@@ -5,32 +5,6 @@
 	<groupId>iudx-api-server</groupId>
 	<artifactId>iudx-api-server</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<build>
-		<sourceDirectory>src</sourceDirectory>
-		<plugins>
-			<plugin>
-				<artifactId>maven-compiler-plugin</artifactId>
-				<version>3.7.0</version>
-				<configuration>
-					<release>10</release>
-				</configuration>
-			</plugin>
-			<plugin>
-				<artifactId>maven-assembly-plugin</artifactId>
-				<configuration>
-					<archive>
-						<manifest>
-							<mainClass>iudx.apiserver.apiserver</mainClass>
-						</manifest>
-					</archive>
-					<descriptorRefs>
-						<descriptorRef>jar-with-dependencies</descriptorRef>
-					</descriptorRefs>
-				</configuration>
-			</plugin>
-
-		</plugins>
-	</build>
 
 	<properties>
 		<maven.compiler.source>10</maven.compiler.source>
@@ -41,9 +15,11 @@
 		<maven-shade-plugin.version>3.1.1</maven-shade-plugin.version>
 		<mustache.version>0.9.5</mustache.version>
 		<postgresql.version>42.2.5</postgresql.version>
-		<undertow.version>2.0.13.Final</undertow.version>
 		<main.class>vertx.App</main.class>
 		<stack.version>3.5.4</stack.version>
+		<vertx.version>4.0.0-SNAPSHOT</vertx.version>
+    	<main.verticle>main.java.iudx.apiserver.MainVerticle</main.verticle>
+    	<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 	</properties>
 
 	<dependencies>
@@ -53,14 +29,29 @@
 			<version>3.5.4</version>
 		</dependency>
 		<dependency>
+      		<groupId>io.vertx</groupId>
+      		<artifactId>vertx-codegen</artifactId>
+     		<version>3.6.2</version>
+    	</dependency>
+		<dependency>
+			<groupId>io.vertx</groupId>
+			<artifactId>vertx-web</artifactId>
+			<version>3.6.2</version>
+		</dependency>
+		<dependency>
+    		<groupId>com.google.guava</groupId>
+    		<artifactId>guava</artifactId>
+    		<version>27.0.1-jre</version>
+		</dependency>
+		<dependency>
 			<groupId>io.vertx</groupId>
 			<artifactId>vertx-core</artifactId>
 			<version>${stack.version}</version>
 		</dependency>
 		<dependency>
-			<groupId>com.julienviet</groupId>
+			<groupId>io.reactiverse</groupId>
 			<artifactId>reactive-pg-client</artifactId>
-			<version>0.3.1</version>
+			<version>0.11.1</version>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.commons</groupId>
@@ -74,5 +65,108 @@
 		</dependency>
 
 	</dependencies>
+	
+	<build>
+    <pluginManagement>
+      <plugins>
+
+        <!-- tag::codegen[] -->
+        <plugin>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>3.5.1</version>
+          <configuration>
+            <source>1.8</source>
+            <target>1.8</target>
+            <useIncrementalCompilation>false</useIncrementalCompilation>
+
+            <annotationProcessors>
+              <annotationProcessor>io.vertx.codegen.CodeGenProcessor</annotationProcessor>
+            </annotationProcessors>
+            <generatedSourcesDirectory>${project.basedir}/src/main/generated</generatedSourcesDirectory>
+            <compilerArgs>
+              <arg>-AoutputDirectory=${project.basedir}/src/main</arg>
+            </compilerArgs>
+
+          </configuration>
+        </plugin>
+        <!-- end::codegen[] -->
+
+        <!-- tag::clean[] -->
+        <plugin>
+          <artifactId>maven-clean-plugin</artifactId>
+          <version>3.0.0</version>
+          <configuration>
+            <filesets>
+              <fileset>
+                <directory>${project.basedir}/src/main/generated</directory>
+              </fileset>
+            </filesets>
+          </configuration>
+        </plugin>
+        <!-- end::clean[] -->
+
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-deploy-plugin</artifactId>
+          <version>2.8.2</version>
+          <configuration>
+            <skip>true</skip>
+          </configuration>
+        </plugin>
+
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>2.4.3</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <manifestEntries>
+                    <Main-Class>io.vertx.core.Launcher</Main-Class>
+                    <Main-Verticle>${main.verticle}</Main-Verticle>
+                  </manifestEntries>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                  <resource>META-INF/services/io.vertx.core.spi.VerticleFactory</resource>
+                </transformer>
+              </transformers>
+              <artifactSet>
+              </artifactSet>
+              <outputFile>${project.build.directory}/${project.artifactId}-${project.version}-fat.jar</outputFile>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>1.5.0</version>
+        <configuration>
+          <mainClass>io.vertx.core.Launcher</mainClass>
+          <systemProperties>
+            <systemProperty>
+              <key>hsqldb.reconfig_logging</key>
+              <value>false</value>
+            </systemProperty>
+          </systemProperties>
+          <arguments>
+            <argument>run</argument>
+            <argument>${main.verticle}</argument>
+          </arguments>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 
 </project>
