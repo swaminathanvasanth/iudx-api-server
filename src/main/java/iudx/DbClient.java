@@ -1,4 +1,4 @@
-package main.java.iudx.apiserver;
+package iudx;
 
 import io.reactiverse.pgclient.PgClient;
 import io.reactiverse.pgclient.PgPool;

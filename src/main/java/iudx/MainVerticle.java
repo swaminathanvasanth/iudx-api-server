@@ -1,4 +1,4 @@
-package main.java.iudx.apiserver;
+package iudx;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.CompositeFuture;

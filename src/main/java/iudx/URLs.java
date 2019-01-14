@@ -1,7 +1,7 @@
 /**
  * 
  */
-package main.java.iudx.apiserver;
+package iudx;
 
 /**
  * @author Swaminathan Vasanth Rajaraman <swaminathanvasanth.r@gmail.com>

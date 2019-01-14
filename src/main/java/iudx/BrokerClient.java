@@ -1,4 +1,4 @@
-package main.java.iudx.apiserver;
+package iudx;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
