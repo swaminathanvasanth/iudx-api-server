@@ -19,6 +19,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.apache.commons.lang3.RandomStringUtils;
 
@@ -56,7 +58,9 @@ import io.vertx.rabbitmq.RabbitMQOptions;
  * @version 1.0.0
  */
 
-public class apiserver extends AbstractVerticle implements  Handler<HttpServerRequest>{
+public class apiserver extends AbstractVerticle implements  Handler<HttpServerRequest>
+{
+	private final static Logger logger = Logger.getLogger(apiserver.class.getName());
 
 	private HttpServer server;
 	
@@ -187,6 +191,8 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 	public void start(Future<Void> startFuture) throws Exception 
 	{
 		/**  Defines the port at which the apiserver should run */
+		
+		logger.setLevel(Level.INFO);
 		
 		int port 			= 8443;
 		
@@ -329,12 +335,24 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 				
 			case "/owner/block":
 			case "/admin/block":
+			
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					block(event, "t");
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
 			case "/owner/unblock":
 			case "/admin/unblock":
 			
 				if(event.method().toString().equalsIgnoreCase("POST")) 
 				{
-					block(event);
+					block(event, "f");
 				} 
 				else 
 				{
@@ -1039,13 +1057,12 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 	 *         incoming request.
 	 */
 	
-	private void block(HttpServerRequest req) 
+	private void block(HttpServerRequest req, String blocked) 
 	{
 		HttpServerResponse resp = req.response();
 		String id 				= req.getHeader("id");
 		String apikey			= req.getHeader("apikey");
 		String entity			= req.getHeader("entity");
-		String blocked			= req.getHeader("blocked");
 		
 		if(   
 			(id == null)
@@ -1106,11 +1123,9 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 		if(ar.succeeded())
 		{
 			if(login_success)
-			{
-				String blocked_flag = blocked.equals("true")?"t":"f";
-				
+			{	
 				String query = "UPDATE users SET blocked = '"	+
-							   blocked_flag						+
+							   blocked							+
 							   "' WHERE id ='"					+
 							   entity							+
 							   "'"								;
