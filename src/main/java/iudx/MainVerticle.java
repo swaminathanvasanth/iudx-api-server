@@ -3,6 +3,8 @@ package iudx;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import broker.BrokerVerticle;
+import database.DbVerticle;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.DeploymentOptions;
@@ -18,8 +20,8 @@ public class MainVerticle extends AbstractVerticle
 	{
 		logger.setLevel(Level.INFO);
 		
-		CompositeFuture.all(deployHelper(DbClient.class.getName()), 
-							deployHelper(BrokerClient.class.getName()), 
+		CompositeFuture.all(deployHelper(DbVerticle.class.getName()), 
+							deployHelper(BrokerVerticle.class.getName()), 
 							deployHelper(apiserver.class.getName()).setHandler(ar -> {
 								
 							if(ar.succeeded())

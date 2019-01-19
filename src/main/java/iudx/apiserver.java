@@ -26,6 +26,8 @@ import org.apache.commons.lang3.RandomStringUtils;
 
 import com.google.common.hash.Hashing;
 
+import broker.BrokerService;
+import database.DbService;
 import io.reactiverse.pgclient.PgClient;
 import io.reactiverse.pgclient.PgIterator;
 import io.reactiverse.pgclient.PgPool;
@@ -47,6 +49,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.JksOptions;
 import io.vertx.rabbitmq.RabbitMQClient;
 import io.vertx.rabbitmq.RabbitMQOptions;
+import io.vertx.serviceproxy.ServiceProxyBuilder;
 
 /**
  * <h1>IUDX API Server</h1> An Open Source implementation of India Urban Data
@@ -78,10 +81,12 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 	/** Handles the message-type header in the HTTP Publish API request */
 	private String message_type;
 	
-	private boolean login_success;
-	private JsonObject queryObject;
-	private boolean autonomous;
-	private String schema;
+	private boolean 		login_success;
+	private JsonObject 		queryObject;
+	private boolean 		autonomous;
+	private String 			schema;
+	private DbService 		dbService;
+	private BrokerService	brokerService;
 
 	/** Handles the owner / entity header in the HTTP Registration API request */
 	private String requested_entity;
@@ -194,17 +199,25 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 		
 		logger.setLevel(Level.INFO);
 		
-		int port 			= 8443;
+		int port 			= 	8443;
 		
-		broker_url 			= URLs.getBrokerUrl();
-		broker_port 		= URLs.getBrokerPort();
-		broker_vhost 		= URLs.getBrokerVhost();
-		broker_username 	= URLs.getBrokerUsername();
-		broker_password 	= URLs.getBrokerPassword();
+		broker_url			= 	URLs.getBrokerUrl();
+		broker_port 		= 	URLs.getBrokerPort();
+		broker_vhost 		= 	URLs.getBrokerVhost();
+		broker_username 	= 	URLs.getBrokerUsername();
+		broker_password		= 	URLs.getBrokerPassword();
 		
-		queryObject			= new JsonObject();
-		login_success		= false;
-		autonomous 			= false;
+		queryObject			= 	new JsonObject();
+		login_success		= 	false;
+		autonomous 			= 	false;
+		
+		ServiceProxyBuilder dbBuilder		= 	new ServiceProxyBuilder(vertx)
+												.setAddress("db.queue");
+		dbService							=	dbBuilder.build(DbService.class);
+		
+		ServiceProxyBuilder brokerBuilder	= 	new ServiceProxyBuilder(vertx)
+												.setAddress("broker.queue");
+		brokerService						=	brokerBuilder.build(BrokerService.class);
 		
 		HttpServer server 	= vertx.createHttpServer(new HttpServerOptions()
 									.setSsl(true)
@@ -446,51 +459,30 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 											
 						if(result.succeeded())
 						{
-							DeliveryOptions brokerOptions = new DeliveryOptions()
-															.addHeader("action", "create-owner-resources");
-									
-							vertx.eventBus().send("broker.queue", 
-								new JsonObject().put("id", owner_name),
-								brokerOptions,
-								reply -> {
-											
+							brokerService.create_owner_resources(owner_name, reply -> {
+							
 							if(reply.succeeded())
 							{
-								JsonObject status = (JsonObject) reply.result().body();
-												
-								if(status.getString("status").equals("created"))
-								{
-									DeliveryOptions bindOptions = new DeliveryOptions()
-													.addHeader("action", "create-owner-bindings");
-												
-									vertx.eventBus().send("broker.queue", 
-												new JsonObject().put("id",owner_name),
-												bindOptions, res -> {
+								brokerService.create_owner_bindings(owner_name, res -> {
 															
 									if(res.succeeded())
 									{
-										JsonObject bindStatus = (JsonObject) res.result().body();
-												
-										if(bindStatus.getString("status").equals("bound"))
-										{
-											JsonObject response = new JsonObject();
-											response.put("id", owner_name);
-											response.put("apikey", generated_apikey);
+										JsonObject response = new JsonObject();
+										response.put("id", owner_name);
+										response.put("apikey", generated_apikey);
 											
-											resp.setStatusCode(200).end(response.toString());
-										}														
+										resp.setStatusCode(200).end(response.toString());													
 									}
 									else
 									{
-											resp.setStatusCode(500).end("could not create bindings");		
+										resp.setStatusCode(500).end("could not create bindings");		
 									}
 								});
 								}
 								else
 								{
-										resp.setStatusCode(500).end("could not create exchanges and queues");
+										resp.setStatusCode(500).end(reply.cause().toString());
 								}
-							}
 							});				
 						}
 						else
@@ -1183,23 +1175,19 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 	
 	private Future<Void> verifyentity(String registration_entity_id) 
 	{
-		Future<Void> verifyentity = Future.future();		
-		String query 	= "SELECT * FROM users WHERE id = '"
-							+ registration_entity_id +	"'";
-		String columns	= "id";
+		Future<Void> verifyentity	=	Future.future();		
+		String query 				=	"SELECT * FROM users WHERE id = '"
+										+ registration_entity_id +	"'";
+		String columns				=	"id";
 		
 		queryObject.put("query", query);
 		queryObject.put("columns", columns);
 		
-		DeliveryOptions options = new DeliveryOptions().addHeader("action", "select-query");
-		
-		vertx.eventBus().send("db.queue", queryObject, options, reply -> {
+		dbService.selectQuery(query, columns, reply -> {
 			
 		if(reply.succeeded())
 		{
-			JsonObject queryResult = (JsonObject)reply.result().body();
-				
-			if(queryResult.getInteger("rowCount")>0)
+			if(reply.result().getInteger("rowCount")>0)
 			{
 				entity_already_exists 	= true;
 			}
@@ -1509,27 +1497,24 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 	{
 		Future<Void> create_credentials = Future.future();
 		
-		String apikey 	= genRandString(32);
-		String salt 	= genRandString(32);
-		String blocked 	= "f";
+		String apikey	=	genRandString(32);
+		String salt 	=	genRandString(32);
+		String blocked 	=	"f";
 		
-		String string_to_hash = apikey + salt + id;
-		String hash = Hashing.sha256().hashString(string_to_hash, StandardCharsets.UTF_8).toString();
+		String string_to_hash	=	apikey + salt + id;
+		String hash				=	Hashing.sha256()
+									.hashString(string_to_hash, StandardCharsets.UTF_8)
+									.toString();
 		
 		String query = "INSERT INTO users VALUES('"
-							+id			+	"','"
-							+hash		+	"','"
-							+schema 	+	"','"
-							+salt		+ 	"','"
-							+blocked	+	"','"
-							+autonomous +	"')";
+						+id			+	"','"
+						+hash		+	"','"
+						+schema 	+	"','"
+						+salt		+ 	"','"
+						+blocked	+	"','"
+						+autonomous +	"')";
 		
-		JsonObject queryObject = new JsonObject();
-		queryObject.put("query", query);
-		
-		DeliveryOptions options= new DeliveryOptions().addHeader("action", "insert-query");
-		
-		vertx.eventBus().send("db.queue",queryObject, options, reply -> {
+		dbService.runQuery(query, reply -> {
 			
 		if(reply.succeeded())
 		{
@@ -1567,22 +1552,17 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 			login_success = false;
 		}
 		
-		String query 		= "SELECT * FROM users WHERE id = '"
-									+	id	+ "'"
-									+	"AND blocked = 'f'";
+		String query		=	"SELECT * FROM users WHERE id = '"
+								+	id	+ "'"
+								+	"AND blocked = 'f'";
 		
-		String columns	 	= "salt,password_hash,is_autonomous";
+		String columns		=	"salt,password_hash,is_autonomous";
 		
-		queryObject.put("query", query);
-		queryObject.put("columns", columns);
-		
-		DeliveryOptions options = new DeliveryOptions().addHeader("action", "select-query");
-		
-		vertx.eventBus().send("db.queue", queryObject, options, reply -> {
+		dbService.selectQuery(query, columns, reply -> {
 			
 		if(reply.succeeded())
 		{
-			JsonObject queryResult = (JsonObject) reply.result().body();
+			JsonObject queryResult = reply.result();
 				
 			if(queryResult.getInteger("rowCount")==0)
 			{
