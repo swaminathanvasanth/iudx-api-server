@@ -1,4 +1,4 @@
-package broker;
+package iudx.broker;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
@@ -23,14 +23,22 @@ public class BrokerVerticle extends AbstractVerticle
 		options.setRequestedChannelMax(5);
 		options.setNetworkRecoveryInterval(500);
 		
-		BrokerService brokerService		= new BrokerServiceImpl(vertx, options);
-		ServiceBinder binder			= new ServiceBinder(vertx);
 		
-		binder	
-		.setAddress("broker.queue")
-		.register(BrokerService.class, brokerService);
-		
-		startFuture.complete();
+		BrokerService.create(vertx, options, ready -> {
+			
+			if(ready.succeeded())
+			{
+				ServiceBinder binder = new ServiceBinder(vertx);
+				
+				binder.setAddress("broker.queue").register(BrokerService.class, ready.result());
+				
+				startFuture.complete();
+			}
+			else
+			{
+				startFuture.fail(ready.cause());
+			}
+			
+		});
 	}
-	
 }

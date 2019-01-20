@@ -14,7 +14,7 @@
 * under the License.
 */
 
-package database;
+package iudx.database;
 
 import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.core.Vertx;
@@ -34,9 +34,9 @@ import io.vertx.serviceproxy.ServiceExceptionMessageCodec;
 import io.vertx.serviceproxy.ProxyUtils;
 
 import io.vertx.core.json.JsonObject;
+import iudx.database.DbService;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
-import database.DbService;
 /*
   Generated Proxy code - DO NOT EDIT
   @author Roger the Robot

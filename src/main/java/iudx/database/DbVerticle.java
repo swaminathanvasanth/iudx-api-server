@@ -1,4 +1,4 @@
-package database;
+package iudx.database;
 
 import io.reactiverse.pgclient.PgPool;
 import io.reactiverse.pgclient.PgPoolOptions;
@@ -22,14 +22,21 @@ public class DbVerticle extends AbstractVerticle
         options.setPassword(URLs.psql_database_password);
         options.setCachePreparedStatements(true);
         options.setMaxSize(10);
-
-		DbService dbService		=	new DbServiceImpl(vertx, options);
-		ServiceBinder binder	=	new ServiceBinder(vertx);
 		
-		binder	
-		.setAddress("db.queue")
-		.register(DbService.class, dbService);
-		
-		startFuture.complete();
+        DbService.create(vertx, options, ready -> {
+        	
+        	if(ready.succeeded())
+        	{
+        		ServiceBinder binder = new ServiceBinder(vertx);
+        		
+        		binder.setAddress("db.queue").register(DbService.class, ready.result());
+        		
+        		startFuture.complete();
+        	}
+        	else
+        	{
+        		startFuture.fail(ready.cause());
+        	}
+        });
 	}	
 }

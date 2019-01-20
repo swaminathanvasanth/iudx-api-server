@@ -14,7 +14,7 @@
 * under the License.
 */
 
-package broker;
+package iudx.broker;
 
 import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.core.Vertx;
@@ -33,7 +33,7 @@ import io.vertx.serviceproxy.ServiceException;
 import io.vertx.serviceproxy.ServiceExceptionMessageCodec;
 import io.vertx.serviceproxy.ProxyUtils;
 
-import broker.BrokerService;
+import iudx.broker.BrokerService;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
 /*

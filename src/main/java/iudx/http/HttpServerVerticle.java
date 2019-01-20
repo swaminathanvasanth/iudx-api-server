@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package iudx;
+package iudx.http;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -26,8 +26,6 @@ import org.apache.commons.lang3.RandomStringUtils;
 
 import com.google.common.hash.Hashing;
 
-import broker.BrokerService;
-import database.DbService;
 import io.reactiverse.pgclient.PgClient;
 import io.reactiverse.pgclient.PgIterator;
 import io.reactiverse.pgclient.PgPool;
@@ -50,6 +48,9 @@ import io.vertx.core.net.JksOptions;
 import io.vertx.rabbitmq.RabbitMQClient;
 import io.vertx.rabbitmq.RabbitMQOptions;
 import io.vertx.serviceproxy.ServiceProxyBuilder;
+import iudx.URLs;
+import iudx.broker.BrokerService;
+import iudx.database.DbService;
 
 /**
  * <h1>IUDX API Server</h1> An Open Source implementation of India Urban Data
@@ -61,9 +62,9 @@ import io.vertx.serviceproxy.ServiceProxyBuilder;
  * @version 1.0.0
  */
 
-public class apiserver extends AbstractVerticle implements  Handler<HttpServerRequest>
+public class HttpServerVerticle extends AbstractVerticle implements  Handler<HttpServerRequest>
 {
-	private final static Logger logger = Logger.getLogger(apiserver.class.getName());
+	private final static Logger logger = Logger.getLogger(HttpServerVerticle.class.getName());
 
 	private HttpServer server;
 	
@@ -211,13 +212,8 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 		login_success		= 	false;
 		autonomous 			= 	false;
 		
-		ServiceProxyBuilder dbBuilder		= 	new ServiceProxyBuilder(vertx)
-												.setAddress("db.queue");
-		dbService							=	dbBuilder.build(DbService.class);
-		
-		ServiceProxyBuilder brokerBuilder	= 	new ServiceProxyBuilder(vertx)
-												.setAddress("broker.queue");
-		brokerService						=	brokerBuilder.build(BrokerService.class);
+		dbService							=	DbService.createProxy(vertx, "db.queue");
+		brokerService						=	BrokerService.createProxy(vertx, "broker.queue");
 		
 		HttpServer server 	= vertx.createHttpServer(new HttpServerOptions()
 									.setSsl(true)
@@ -240,7 +236,7 @@ public class apiserver extends AbstractVerticle implements  Handler<HttpServerRe
 		});
 		
 		server
-			.requestHandler(apiserver.this)
+			.requestHandler(HttpServerVerticle.this)
 			.listen(port, ar -> {
 				
 				if(ar.succeeded())

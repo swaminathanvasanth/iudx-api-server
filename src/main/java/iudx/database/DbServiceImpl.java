@@ -1,4 +1,4 @@
-package database;
+package iudx.database;
 
 import io.reactiverse.pgclient.PgClient;
 import io.reactiverse.pgclient.PgConnection;
@@ -18,11 +18,13 @@ public class DbServiceImpl implements DbService
 	PgPool client;
 	Vertx vertx;
 	
-	public DbServiceImpl(Vertx vertx, PgPoolOptions options) 
+	public DbServiceImpl(Vertx vertx, PgPoolOptions options, Handler<AsyncResult<DbService>> resultHandler) 
 	{
 		this.vertx		=	vertx;
 		this.options	=	options;
 		client			=	PgClient.pool(vertx, options);
+		
+		resultHandler.handle(Future.succeededFuture(this));
 	}
 
 	@Override
@@ -93,10 +95,10 @@ public class DbServiceImpl implements DbService
 							String list ="";
 							
 							//TODO: Unsafe. May block the event-loop
-							for(Row row:rows)
-							{
-								list = list + row.getString(columns[0]) + ",";
-							}
+//							for(Row row:rows)
+//							{
+//								list = list + row.getString(columns[0]) + ",";
+//							}
 							
 							queryResult.put(columns[0], list);
 						}

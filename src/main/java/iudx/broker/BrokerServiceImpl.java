@@ -1,4 +1,4 @@
-package broker;
+package iudx.broker;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -6,9 +6,9 @@ import java.util.Map;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
+import io.vertx.rabbitmq.RabbitMQOptions;
 import io.vertx.core.Vertx;
 import io.vertx.rabbitmq.RabbitMQClient;
-import io.vertx.rabbitmq.RabbitMQOptions;
 
 public class BrokerServiceImpl implements BrokerService
 {
@@ -18,13 +18,26 @@ public class BrokerServiceImpl implements BrokerService
 	int count;
 	Vertx vertx;
 	
-	BrokerServiceImpl(Vertx vertx, RabbitMQOptions options/**, Handler<AsyncResult<Void>> result**/)
+	BrokerServiceImpl(Vertx vertx, RabbitMQOptions options, Handler<AsyncResult<BrokerService>> result)
 	{
 		this.options	= 	options;
 		this.vertx		= 	vertx;
 		adminpool		= 	new HashMap<String, RabbitMQClient>();
+		client			=	RabbitMQClient.create(vertx, options);
 		
-		getAdminChannel();
+		client.start(resultHandler -> {
+			
+			if(resultHandler.succeeded())
+			{
+				adminpool.put("admin", client);
+				result.handle(Future.succeededFuture(this));
+			}
+			else
+			{
+				System.out.println(resultHandler.cause());
+				result.handle(Future.failedFuture(resultHandler.cause()));
+			}
+		});
 	
 	}
 	
@@ -40,8 +53,13 @@ public class BrokerServiceImpl implements BrokerService
 				
 				if(ar.succeeded())
 				{
-					init.complete();
 					adminpool.put("admin", client);
+					init.complete();
+					
+				}
+				else
+				{
+					System.out.println(ar.cause());
 				}
 			});
 		}
@@ -53,8 +71,12 @@ public class BrokerServiceImpl implements BrokerService
 				
 				if(ar.succeeded())
 				{
-					init.complete();
 					adminpool.put("admin", client);
+					init.complete();
+				}
+				else
+				{
+					System.out.println(ar.cause());
 				}
 			});
 		}
@@ -79,32 +101,33 @@ public class BrokerServiceImpl implements BrokerService
 			{
 				RabbitMQClient adminChannel = adminpool.get("admin");
 				
-				adminChannel.exchangeDeclare(id+".notification", "topic", true, false, result -> 
-				{
+				adminChannel.exchangeDeclare(id+".notification", "topic", true, false, result -> {
+					
 					if(result.succeeded())
 					{
 						count--;
-						if(count==0)resultHandler.handle(Future.succeededFuture());
+						if(count == 0) resultHandler.handle(Future.succeededFuture());
 					}
 					else
 					{
 						resultHandler.handle(Future.failedFuture(result.cause()));
 					}
 				});
-						
-				adminChannel.queueDeclare(id+".notification", true, false, false, 
-				result -> 
-				{
+				
+				
+				adminChannel.queueDeclare(id+".notification", true, false, false, result -> {
+					
 					if(result.succeeded())
 					{
 						count--;
-						if(count==0)resultHandler.handle(Future.succeededFuture());
+						if(count == 0) resultHandler.handle(Future.succeededFuture());
 					}
 					else
 					{
 						resultHandler.handle(Future.failedFuture(result.cause()));
 					}
 				});
+				
 			}
 		});
 		

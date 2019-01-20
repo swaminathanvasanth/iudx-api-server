@@ -14,9 +14,9 @@
 * under the License.
 */
 
-package broker;
+package iudx.database;
 
-import broker.BrokerService;
+import iudx.database.DbService;
 import io.vertx.core.Vertx;
 import io.vertx.core.Handler;
 import io.vertx.core.AsyncResult;
@@ -41,7 +41,8 @@ import io.vertx.serviceproxy.ServiceException;
 import io.vertx.serviceproxy.ServiceExceptionMessageCodec;
 import io.vertx.serviceproxy.HelperUtils;
 
-import broker.BrokerService;
+import io.vertx.core.json.JsonObject;
+import iudx.database.DbService;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
 /*
@@ -50,24 +51,24 @@ import io.vertx.core.Handler;
 */
 
 @SuppressWarnings({"unchecked", "rawtypes"})
-public class BrokerServiceVertxProxyHandler extends ProxyHandler {
+public class DbServiceVertxProxyHandler extends ProxyHandler {
 
   public static final long DEFAULT_CONNECTION_TIMEOUT = 5 * 60; // 5 minutes 
   private final Vertx vertx;
-  private final BrokerService service;
+  private final DbService service;
   private final long timerID;
   private long lastAccessed;
   private final long timeoutSeconds;
 
-  public BrokerServiceVertxProxyHandler(Vertx vertx, BrokerService service){
+  public DbServiceVertxProxyHandler(Vertx vertx, DbService service){
     this(vertx, service, DEFAULT_CONNECTION_TIMEOUT);
   }
 
-  public BrokerServiceVertxProxyHandler(Vertx vertx, BrokerService service, long timeoutInSecond){
+  public DbServiceVertxProxyHandler(Vertx vertx, DbService service, long timeoutInSecond){
     this(vertx, service, true, timeoutInSecond);
   }
 
-  public BrokerServiceVertxProxyHandler(Vertx vertx, BrokerService service, boolean topLevel, long timeoutSeconds) {
+  public DbServiceVertxProxyHandler(Vertx vertx, DbService service, boolean topLevel, long timeoutSeconds) {
       this.vertx = vertx;
       this.service = service;
       this.timeoutSeconds = timeoutSeconds;
@@ -114,33 +115,14 @@ public class BrokerServiceVertxProxyHandler extends ProxyHandler {
       if (action == null) throw new IllegalStateException("action not specified");
       accessed();
       switch (action) {
-        case "create_owner_resources": {
-          service.create_owner_resources((java.lang.String)json.getValue("id"),
+        case "runQuery": {
+          service.runQuery((java.lang.String)json.getValue("query"),
                         HelperUtils.createHandler(msg));
           break;
         }
-        case "delete_owner_resources": {
-          service.delete_owner_resources((java.lang.String)json.getValue("id"),
-                        HelperUtils.createHandler(msg));
-          break;
-        }
-        case "create_owner_bindings": {
-          service.create_owner_bindings((java.lang.String)json.getValue("id"),
-                        HelperUtils.createHandler(msg));
-          break;
-        }
-        case "create_entity_resources": {
-          service.create_entity_resources((java.lang.String)json.getValue("id"),
-                        HelperUtils.createHandler(msg));
-          break;
-        }
-        case "delete_entity_resources": {
-          service.delete_entity_resources((java.lang.String)json.getValue("id_list"),
-                        HelperUtils.createHandler(msg));
-          break;
-        }
-        case "create_entity_bindings": {
-          service.create_entity_bindings((java.lang.String)json.getValue("id"),
+        case "selectQuery": {
+          service.selectQuery((java.lang.String)json.getValue("query"),
+                        (java.lang.String)json.getValue("column_list"),
                         HelperUtils.createHandler(msg));
           break;
         }
