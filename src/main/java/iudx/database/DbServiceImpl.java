@@ -95,10 +95,10 @@ public class DbServiceImpl implements DbService
 							String list ="";
 							
 							//TODO: Unsafe. May block the event-loop
-//							for(Row row:rows)
-//							{
-//								list = list + row.getString(columns[0]) + ",";
-//							}
+							for(Row row:rows)
+							{
+								list = list + row.getString(columns[0]) + ",";
+							}
 							
 							queryResult.put(columns[0], list);
 						}

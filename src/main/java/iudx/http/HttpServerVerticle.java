@@ -17,6 +17,7 @@ package iudx.http;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -212,28 +213,14 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		login_success		= 	false;
 		autonomous 			= 	false;
 		
-		dbService							=	DbService.createProxy(vertx, "db.queue");
-		brokerService						=	BrokerService.createProxy(vertx, "broker.queue");
+		dbService			=	DbService.createProxy(vertx, "db.queue");
+		brokerService		=	BrokerService.createProxy(vertx, "broker.queue");
 		
 		HttpServer server 	= vertx.createHttpServer(new HttpServerOptions()
 									.setSsl(true)
 									.setKeyStoreOptions(new JksOptions()
 									.setPath("my-keystore.jks")
 									.setPassword("password")));
-		
-		HttpHeaders.createOptimized(
-						java.time.format
-						.DateTimeFormatter
-						.RFC_1123_DATE_TIME
-						.format(java.time.ZonedDateTime.now()));
-		
-		vertx.setPeriodic(1000, handler -> {
-			HttpHeaders.createOptimized(
-						java.time.format
-						.DateTimeFormatter
-						.RFC_1123_DATE_TIME
-						.format(java.time.ZonedDateTime.now()));
-		});
 		
 		server
 			.requestHandler(HttpServerVerticle.this)
@@ -248,8 +235,6 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 					startFuture.fail(ar.cause());
 				}
 			});
-		
-		//int procs = Runtime.getRuntime().availableProcessors();
 
 		vertx.exceptionHandler(err -> {
 			err.printStackTrace();
@@ -389,14 +374,14 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private void register_owner(HttpServerRequest req) 
 	{
-		HttpServerResponse resp		= req.response();
-		String id 					= req.getHeader("id");
-		String apikey 				= req.getHeader("apikey");
-		String owner_name 			= req.getHeader("owner");
+		HttpServerResponse resp		=	req.response();
+		String id					=	req.getHeader("id");
+		String apikey				=	req.getHeader("apikey");
+		String owner_name			=	req.getHeader("owner");
 		
 		if(		(id == null)
 					||
-			  (apikey == null)
+			(apikey == null)
 					||
 			(owner_name == null)
 		)
@@ -410,95 +395,68 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			return;
 		}
 		
-		//TODO: Add a valid regex
-		if(owner_name.matches("[^a-z]+"))
+		if(!is_valid_owner(owner_name))
 		{
 			resp.setStatusCode(400).end("Owner name is invalid");
 		}
 		
-		if (owner_name.contains("/")) 
+		check_login(id,apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
 		{
-			resp.setStatusCode(403).end();
-			return;
-		} 
-		
-		// Check if ID already exists
-		entity_already_exists = false;
-		entity_verification = verifyentity(requested_entity);
-		entity_verification.setHandler(entity_verification_handler -> {
-				
-		if (entity_verification_handler.succeeded()) 
+			entity_does_not_exist(owner_name)
+			.setHandler(entityDoesNotExist -> {
+					
+		if(entityDoesNotExist.succeeded())
 		{
-			if (entity_already_exists) 
-			{
-				message = new JsonObject();
-				message.put("conflict", "Owner ID already used");
-				resp.setStatusCode(409).end(message.toString());
-				return;
-			} 
-			else 
-			{
-				login_success 				= false;
-				Future<Void> login_check 	= check_login(id,apikey);
-							
-				login_check.setHandler(ar -> {
+			generate_credentials(owner_name, "{}", "true")
+			.setHandler(generate_credentials -> {
 								
-				if(ar.succeeded())
-				{
-					if(login_success==true)
-					{
-						Future<Void> get_credentials=generate_credentials(owner_name, 
-																			"{}", 
-																			"true");
-						
-						get_credentials.setHandler(result -> {
-											
-						if(result.succeeded())
-						{
-							brokerService.create_owner_resources(owner_name, reply -> {
-							
-							if(reply.succeeded())
-							{
-								brokerService.create_owner_bindings(owner_name, res -> {
-															
-									if(res.succeeded())
-									{
-										JsonObject response = new JsonObject();
-										response.put("id", owner_name);
-										response.put("apikey", generated_apikey);
-											
-										resp.setStatusCode(200).end(response.toString());													
-									}
-									else
-									{
-										resp.setStatusCode(500).end("could not create bindings");		
-									}
-								});
-								}
-								else
-								{
-										resp.setStatusCode(500).end(reply.cause().toString());
-								}
-							});				
-						}
-						else
-						{
-							resp.setStatusCode(500).end(result.cause().toString());
-						}				
-					});
-				}
-				else
-				{
-					resp.setStatusCode(403).end("Invalid ID or Apikey");
-				}
-			}
-		});
-		}		
-	} 
-		else 
+		if(generate_credentials.succeeded())
 		{
-					resp.setStatusCode(500).end();
-					return;
+			brokerService.create_owner_resources(owner_name, broker_create -> {
+											
+		if(broker_create.succeeded())
+		{
+			brokerService.create_owner_bindings(owner_name, broker_bind -> {
+			
+		if(broker_bind.succeeded())
+		{
+			JsonObject response = new JsonObject();
+			response.put("id", owner_name);
+			response.put("apikey", generate_credentials.result());
+			resp.setStatusCode(200).end(response.toString());			
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not create bindings");
+		}
+			
+	});		
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not create exchanges and queues");
+		}	
+	});
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not generate credentials");
+		}
+								
+	});
+		}
+		else
+		{
+			resp.setStatusCode(409).end("Owner already exists");
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
 		}
 	});
 }
@@ -540,184 +498,110 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			return;
 		}
 		
-		//TODO: Add a valid regex
-		if(owner_name.matches("[^a-z]+"))
+		if(!is_valid_owner(owner_name))
 		{
 			resp.setStatusCode(400).end("Owner name is invalid");
 		}
 		
-		if (owner_name.contains("/")) 
+		check_login(id, apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
 		{
-			resp.setStatusCode(403).end();
-			return;
-		} 
-		
-		// Check if ID already exists
-		entity_already_exists = true;
-		entity_verification = verifyentity(owner_name);
-		entity_verification.setHandler(entity_verification_handler -> {
-		
-		if (entity_verification_handler.succeeded()) 
+			entity_exists(owner_name).setHandler(ownerExists -> {
+					
+		if(ownerExists.succeeded())
 		{
-			if (! entity_already_exists) 
-			{
-				message = new JsonObject();
-				message.put("failure", "Owner ID not found");
-				resp.setStatusCode(401).end(message.toString());
-				return;
-			} 
-			else 
-			{
-				login_success = false;
-				Future<Void> login_check 	= check_login(id,apikey);
-				
-				login_check.setHandler(ar -> {
-					
-				if(ar.succeeded())
-				{
-					if(login_success==true)
-					{
-						System.out.println("login ok");
-						
-						DeliveryOptions options = new DeliveryOptions()
-												  .addHeader("action", 
-												  "delete-owner-resources");	
-					
-						vertx.eventBus().send("broker.queue", new JsonObject().put("id", owner_name), 
-														  options, 
-														  reply -> {
-						
-				if(reply.succeeded())
-				{
-					JsonObject result = (JsonObject)reply.result().body();
-						
-					if(result.getString("status").equals("deleted"))
-					{
-						System.out.println("delete ok");
-						DeliveryOptions pgOptions = new DeliveryOptions().addHeader("action", "delete-query");
+			brokerService.delete_owner_resources(owner_name, delete_owner_resources -> {
 							
-							// owner name like 'owner/%%' 
-							// exchange name like 'owner/%%'
-							
-							//TODO: Delete from follow table too
-							
-						String acl_query 	= "DELETE FROM acl WHERE"	+
-										      " from_id LIKE '"			+	
-										      owner_name				+	
-										      "/%%'"					+
-										      " OR exchange LIKE '"		+
-										      owner_name				+
-										      "/%%'"					;
-							
-						//TODO: Add logger for debug statements
-							
-						System.out.println("Query = " + acl_query);
+		if(delete_owner_resources.succeeded())
+		{
+			String acl_query	=	"DELETE FROM acl WHERE"	+
+									" from_id LIKE '"		+	
+									owner_name				+	
+									"/%%'"					+
+									" OR exchange LIKE '"	+
+									owner_name				+
+									"/%%'"					;
+								
+			dbService.runQuery(acl_query, aclDelete -> {
+									
+		if(aclDelete.succeeded())
+		{
+			String entity_query	=	"SELECT * FROM users WHERE"	+
+						    		" id LIKE '"				+	
+						    		owner_name					+								    					  "/%%'";
+									
+			String columns		=	"id";
+										
+			dbService.selectQuery(entity_query, columns, ids -> {
 											
-							
-						vertx.eventBus().send("db.queue", new JsonObject().put("query", acl_query),
-													pgOptions, pgReply -> {
+		if(ids.succeeded())
+		{			
+			String id_list	=	ids.result().getJsonObject("result").getString("id");
+												
+			brokerService.delete_entity_resources(id_list, deleteEntities -> {
+												
+		if(deleteEntities.succeeded())
+		{
+			String user_query	=	"DELETE FROM users WHERE"	+
+									" id LIKE '"				+	
+									owner_name					+	
+									"/%%'"						+
+									" OR id LIKE '"				+
+									owner_name					+
+									"'"							;
 														
-				if(pgReply.succeeded())
-				{
-					System.out.println("query ok");
-					JsonObject queryResult = (JsonObject)pgReply.result().body();
-								
-					System.out.println("query status = " + queryResult.getString("status"));
-								
-					if(queryResult.getString("status").equals("success"))
-					{
-						String entity_query 	= "SELECT * FROM users WHERE"	+
-						    					  " id LIKE '"					+	
-						    					  owner_name					+								    					  "/%%'";
-									
-						String columns 			= "id";
-									
-						System.out.println("Query = " + entity_query);
-									
-						JsonObject params = new JsonObject();
-									
-						params.put("query", entity_query);
-						params.put("columns", columns);
-									
-						DeliveryOptions entityOptions = new DeliveryOptions()
-														.addHeader("action", "select-query");
-								
-						vertx.eventBus().send("db.queue", params, entityOptions, 
-										 res -> {
-										
-				if(res.succeeded())
-				{
-					JsonObject resultJson 	= (JsonObject)res.result().body();
-										
-					System.out.println("result = " + resultJson.toString());
-										
-					String id_list	 	= resultJson.getJsonObject("result").getString("id");
-										
-					DeliveryOptions brokerOptions = new DeliveryOptions()
-													.addHeader("action", "delete-owner-entities");
-										
-					vertx.eventBus().send("broker.queue", new JsonObject().put("id_list", id_list),
-														  brokerOptions,
-														  brokerResult -> {
-																
-				if(brokerResult.succeeded())
-				{
-					String user_query 	= "DELETE FROM users WHERE"	+
-							  			  " id LIKE '"				+	
-							  			  owner_name				+	
-							  			  "/%%'"					+
-							  			  " OR id LIKE '"			+
-							  			  owner_name				+
-							  			  "'"						;
-											
-					DeliveryOptions userDeleteOptions = new DeliveryOptions()
-														.addHeader("action", "delete-query");
-											
-					vertx.eventBus().send("db.queue", new JsonObject().put("query", user_query),
-													  userDeleteOptions,
-													  userDeleteRes -> {
-											
-				if(userDeleteRes.succeeded())
-				{
-					resp.setStatusCode(200).end();
-				}
-				else
-				{
-					resp.setStatusCode(500).end();
-				}												 
-			});
+			dbService.runQuery(user_query, deleteUsers -> {
+															
+		if(deleteUsers.succeeded())
+		{
+			resp.setStatusCode(200).end();
 		}
-				else
-				{
-					resp.setStatusCode(500).end();
-				}
-			});									
+		else
+		{
+			resp.setStatusCode(500).end("Could not delete from users' table");
 		}
-			});
+	});
 		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not delete owner entities");
 		}
-			});
+	});
 		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not get entities belonging to owner");
 		}
-				else
-				{
-					resp.setStatusCode(500).end("Falied to delete owner");
-				}
-						
-			});
+	});
 		}
-				else
-				{
-					resp.setStatusCode(403).end("Invalid id or apikey");
-				}
+		else
+		{
+			resp.setStatusCode(500).end("Could not delete from acl table");
 		}
-			});
-				
+	});
 		}
-	}
-			});
-}
+		else
+		{
+			resp.setStatusCode(500).end("Could not delete owner resources");
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("No such owner");
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+		}
+			
+	});
 	
+}
 	/**
 	 * This method is the implementation of entity Registration API, which handles
 	 * the new device or application registration requests by owners.
@@ -731,12 +615,32 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	//TODO: Try Future Compose?
 	private void register(HttpServerRequest req) 
 	{
-		HttpServerResponse resp		= req.response();
-		String id 					= req.getHeader("id");
-		String apikey		 		= req.getHeader("apikey");
-		String entity 				= req.getHeader("entity");
-		String is_autonomous		= req.getHeader("is-autonomous");
-		String full_entity_name		= id	+ "/" 	+ entity;
+		HttpServerResponse resp	=	req.response();
+		String id 				=	req.getHeader("id");
+		String apikey			=	req.getHeader("apikey");
+		String entity			=	req.getHeader("entity");
+		String is_autonomous	=	req.getHeader("is-autonomous");
+		String full_entity_name	=	id	+ "/" 	+ entity;
+		
+		String autonomous_flag;
+		
+		if(is_autonomous	==	null)
+		{
+			autonomous_flag	=	"f";
+		}
+		else if(is_autonomous.equals("true"))
+		{
+			autonomous_flag	=	"t";
+		}
+		else if(is_autonomous.equals("false"))
+		{
+			autonomous_flag	=	"f";
+		}
+		else
+		{
+			resp.setStatusCode(400).end("Invalid is-autonomous header");
+			return;
+		}
 		
 		//TODO: Check if body is null
 		req.bodyHandler(body -> {
@@ -751,114 +655,79 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		)
 		{
 			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
 		}
 		
 		//TODO: Add appropriate field checks. E.g. valid owner, valid entity etc.
 		// Check if ID is owner
-		if (id.contains("/")) 
+		if (!is_valid_owner(id)) 
 		{
-			resp.setStatusCode(401).end();
+			resp.setStatusCode(403).end("Invalid owner");
 			return;
 		} 
-		else 
-		{	
-			// Check if ID already exists
-			entity_already_exists = false;
-			entity_verification = verifyentity(full_entity_name);
-
-			entity_verification.setHandler(entity_verification_handler -> {
-
-			if (entity_verification_handler.succeeded()) 
-			{
-				if (entity_already_exists) 
-				{
-					message = new JsonObject();
-					message.put("conflict", "entity ID already used");
-					resp.setStatusCode(409).end(message.toString());
-					return;
-				} 
-				else 
-				{
-					login_success 				= false;
-					Future<Void> login_check 	= check_login(id,apikey);
-						
-					login_check.setHandler(ar -> {
+		
+		if(!is_string_safe(entity))
+		{
+			resp.setStatusCode(400).end("Invalid entity name");
+			return;
+		}
+		
+		check_login(id,apikey).setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			entity_does_not_exist(full_entity_name).setHandler(entityDoesNotExist -> {
+					
+		if(entityDoesNotExist.succeeded())
+		{
+			generate_credentials(full_entity_name, schema, autonomous_flag)
+			.setHandler(genCredentials -> {
 							
-					if(ar.succeeded())
-					{
-						if(login_success==true)
-						{
-							Future<Void> get_credentials=generate_credentials(full_entity_name, 
-																				schema, 
-																				is_autonomous);
-							get_credentials.setHandler(result -> {
+		if(genCredentials.succeeded())
+		{
+			brokerService.create_entity_resources(full_entity_name, createEntityResources -> {
+									
+		if(createEntityResources.succeeded())
+		{
+			brokerService.create_entity_bindings(full_entity_name, createEntityBindings -> {
 										
-					if(result.succeeded())
-					{
-						DeliveryOptions brokerOptions = new DeliveryOptions()
-														.addHeader("action", "create-entity-resources");
-								
-						vertx.eventBus().send("broker.queue", 
-										new JsonObject().put("id", full_entity_name),
-										brokerOptions,
-										reply -> {
-										
-					if(reply.succeeded())
-					{
-						JsonObject status = (JsonObject) reply.result().body();
-											
-						if(status.getString("status").equals("created"))
-						{
-							DeliveryOptions bindOptions = new DeliveryOptions()
-														  .addHeader("action", 
-														  "create-entity-bindings");
-											
-							vertx.eventBus().send("broker.queue", 
-											new JsonObject().put("id",full_entity_name),
-											bindOptions, res -> {
-														
-					if(res.succeeded())
-					{
-						JsonObject bindStatus = (JsonObject) res.result().body();
-											
-						if(bindStatus.getString("status").equals("bound"))
-						{
-							JsonObject response = new JsonObject();
-							response.put("id", full_entity_name);
-							response.put("apikey", generated_apikey);
-										
-							resp.setStatusCode(200).end(response.toString());
-						}														
-					}
-					else
-					{
-						resp.setStatusCode(500).end("could not create bindings");		
-					}
-				});
-			}
-			else
-			{
-				resp.setStatusCode(500).end("could not create exchanges and queues");
-			}
+		if(createEntityBindings.succeeded())
+		{
+			JsonObject response = new JsonObject();
+			response.put("id", full_entity_name);
+			response.put("apikey", genCredentials.result());
+			resp.setStatusCode(200).end(response.toString());
+			return;
 		}
-	});				
-}
-			else
-			{
-				resp.setStatusCode(500).end(result.cause().toString());
-			}				
-});
-}
-			else
-			{
-				resp.setStatusCode(403).end("login failed");
-			}
+		else
+		{
+			resp.setStatusCode(500).end("Could not create bindings");
+		}		
+	});
 		}
-	});				
-}
+		else
+		{
+			resp.setStatusCode(500).end("Could not create exchanges and queues");
 		}
 	});
-  }
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not generate entity credentials");
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(409).end("ID already used");
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+		}
+	});	
 }
 	/**
 	 * This method is the implementation of entity De-Registration API, which handles
@@ -872,165 +741,106 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private void de_register(HttpServerRequest req) 
 	{
-		System.out.println("in deregister entity");
-		HttpServerResponse resp = req.response();
-		String id 				= req.getHeader("id");
-		String apikey			= req.getHeader("apikey");
-		String entity			= req.getHeader("entity");
+		HttpServerResponse resp =	req.response();
+		String id 				=	req.getHeader("id");
+		String apikey			=	req.getHeader("apikey");
+		String entity			=	req.getHeader("entity");
 
 		// Check if ID is owner
-		if (id.contains("/")) 
+		if (!is_valid_owner(id)) 
 		{
-			resp.setStatusCode(403).end();
+			resp.setStatusCode(400).end("Invalid owner");
 			return;
 		} 
 		
-		if((!entity.startsWith(id)) || (!entity.contains("/")))
+		if(!is_valid_entity(entity))
 		{
-			resp.setStatusCode(403).end();
+			resp.setStatusCode(403).end("Invalid entity");
 			return;
 		}
 		
-		else 
+		check_login(id, apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
 		{
-			// Check if ID exists
-			entity_already_exists 	= false;
-			entity_verification 	= verifyentity(entity);
-
-			entity_verification.setHandler(entity_verification_handler -> {
-
-			if (entity_verification_handler.succeeded())
-			{
-				if (! entity_already_exists) 
-				{
-					message = new JsonObject();
-					message.put("failure", "Entity ID not found");
-					resp.setStatusCode(401).end(message.toString());
-					return;
-				} 
-				else 
-				{
-					login_success = false;
-					Future<Void> login = check_login(id,apikey);
+			entity_exists(entity)
+			.setHandler(entityExists -> {
 					
-					login.setHandler(handler -> {
-						
-					if(handler.succeeded())
-					{
-						if(login_success=true)
-						{
-							System.out.println("login ok");
-							DeliveryOptions brokerOptions = new DeliveryOptions()
-															.addHeader("action", "delete-entity-resources");
+		if(entityExists.succeeded())
+		{
+			brokerService.delete_entity_resources(entity, deleteEntityResources -> {
 							
-							vertx.eventBus().send("broker.queue", 
-									         new JsonObject().put("id_list", entity), 
-									         brokerOptions, reply -> {
-								        	 
-					if(reply.succeeded())
-					{
-						System.out.println("broker delete ok");
-								
-						String acl_query = "DELETE FROM acl WHERE "		+
-									   	   "from_id = '"				+
-									       entity						+
-									       "' OR exchange LIKE '"		+
-									       entity						+
-									       ".%%'"						;
-								
-						DeliveryOptions pgAclOptions = new DeliveryOptions()
-													   .addHeader("action", "delete-query");
-								
-						vertx.eventBus().send("db.queue", 
-										 new JsonObject().put("query", acl_query), 
-										 pgAclOptions, 
-										 result -> {
-										 
-					if(result.succeeded())
-					{
-						JsonObject aclDeleteResult = (JsonObject)result.result().body();
-							
-						if(aclDeleteResult.getString("status").equals("success"))
-						{
-							DeliveryOptions pgFollowOptions = new DeliveryOptions()
-															  .addHeader("action", "delete-query");
-								
-							String follow_query = "DELETE FROM follow WHERE "	+
-												  " requested_by = '"			+
-										   		  entity						+
-										   		  "' OR exchange LIKE '"		+
-										   		  entity						+
-										   		  ".%%'"						;
-								
-							vertx.eventBus().send("db.queue", 
-										 new JsonObject().put("query", follow_query), 
-										 pgFollowOptions, 
-										 follow_result -> {
-										 
-					if(follow_result.succeeded())
-					{
-						JsonObject followDeleteResult = (JsonObject)follow_result.result().body();
-							
-						if(followDeleteResult.getString("status").equals("success"))
-						{
-							DeliveryOptions pgUserOptions = new DeliveryOptions()
-															.addHeader("action", "delete-query");
-								
-							String user_query = "DELETE FROM users WHERE "	+
-										        " id = '"					+
-										        entity						+
-										        "'"							;
-								
-							vertx.eventBus().send("db.queue", 
-										 	new JsonObject().put("query", user_query), 
-										 	pgFollowOptions, 
-										 	user_result -> {
-											 
-					if(user_result.succeeded())
-					{
-						JsonObject userDeleteResult = (JsonObject)follow_result.result().body();
-							
-						if(userDeleteResult.getString("status").equals("success"))
-						{
-							resp.setStatusCode(200).end();
-						}
-					}
-					else
-					{
-						resp.setStatusCode(500).end("Could not delete from user table");
-					}
-				});
-			}
+		if(deleteEntityResources.succeeded())
+		{
+			String acl_query	=	"DELETE FROM acl WHERE "	+
+									"from_id = '"				+
+									entity						+
+									"' OR exchange LIKE '"		+
+									entity						+
+									".%%'"						;
+			dbService.runQuery(acl_query, aclQuery -> {
+									
+		if(aclQuery.succeeded())
+		{
+			String follow_query	=	"DELETE FROM follow WHERE "	+
+									" requested_by = '"			+
+									entity						+
+									"' OR exchange LIKE '"		+
+									entity						+
+									".%%'"						;
+										
+			dbService.runQuery(follow_query, followQuery -> {
+											
+		if(followQuery.succeeded())
+		{
+			String user_query	=	"DELETE FROM users WHERE "	+
+									" id = '"					+
+									entity						+
+									"'"							;
+												
+			dbService.runQuery(user_query, userQuery -> {
+													
+		if(userQuery.succeeded())
+		{
+			resp.setStatusCode(200).end();
 		}
-				else
-				{
-					resp.setStatusCode(500).end("Could not delete from follow");
-				}						 
-			});
+		else
+		{
+			resp.setStatusCode(500).end("Could not delete from users");
 		}
-	}
-				else
-				{
-					resp.setStatusCode(500).end("Could not delete from acl");
-				}
-			});
+	});
 		}
-				else
-				{
-					resp.setStatusCode(500).end("Could not delete from broker");
-				}
-			});
+		else
+		{
+			resp.setStatusCode(500).end("Could not delete from follow");
 		}
-				else
-				{
-					resp.setStatusCode(403).end("Invalid id or apikey");
-				}
+	});
 		}
-			});
+		else
+		{
+			resp.setStatusCode(500).end("Could not delete from acl");
+		}	
+	});
 		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not delete exchanges and queues");
 		}
-			});
+	});
 		}
+		else
+		{
+			resp.setStatusCode(400).end("No such entity");
+		}
+					
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+		}
+	});
 }
 	/**
 	 * This method is the implementation of entity Block and Un-Block API, which
@@ -1047,10 +857,10 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private void block(HttpServerRequest req, String blocked) 
 	{
-		HttpServerResponse resp = req.response();
-		String id 				= req.getHeader("id");
-		String apikey			= req.getHeader("apikey");
-		String entity			= req.getHeader("entity");
+		HttpServerResponse resp	=	req.response();
+		String id				=	req.getHeader("id");
+		String apikey			=	req.getHeader("apikey");
+		String entity			=	req.getHeader("entity");
 		
 		if(   
 			(id == null)
@@ -1064,99 +874,56 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			return;
 		}
 		
-		if(
-			(!entity.startsWith(id)) 
-					|| 
-			(!entity.contains("/"))
-		)
+		if(!is_valid_owner(id))
 		{
-			resp.setStatusCode(403).end();
+			resp.setStatusCode(400).end("Invalid owner");
 			return;
 		}
 		
-		// Check if ID is owner
-		if (id.contains("/")) 
+		if(!is_valid_entity(entity))
 		{
-			resp.setStatusCode(401).end();
-			return;
-		} 
-		if(!(blocked.equals("true") || (blocked.equals("false"))))
-		{
-			resp.setStatusCode(400).end("Invalid blocked string. Must be true or false");
+			resp.setStatusCode(400).end("Invalid entity");
 			return;
 		}
-	
-		// Check if ID already exists
-		entity_already_exists = true;
-		entity_verification = verifyentity(id);
-
-		entity_verification.setHandler(entity_verification_handler -> {
-
-		if (entity_verification_handler.succeeded()) 
-		{
-			if (!entity_already_exists) 
-			{
-				message = new JsonObject();
-				message.put("failure", "Entity ID not found");
-				resp.setStatusCode(401).end(message.toString());
-				return;
-			} 
-			else 
-			{
-				login_success 		= false;
-				Future<Void> login 	= check_login(id,apikey);
-				
-				login.setHandler(ar -> {
-					
-		if(ar.succeeded())
-		{
-			if(login_success)
-			{	
-				String query = "UPDATE users SET blocked = '"	+
-							   blocked							+
-							   "' WHERE id ='"					+
-							   entity							+
-							   "'"								;
-				DeliveryOptions options = new DeliveryOptions()
-										  .addHeader("action", "update-query");
-				
-				vertx.eventBus().send("db.queue", new JsonObject().put("query", query), 
-								 options, 
-								 reply -> {
-									 
-		if(reply.succeeded())
-		{
-			JsonObject query_result = (JsonObject)reply.result().body();
+		
+		check_login(id,apikey)
+		.setHandler(login -> {
 			
-			if(query_result.getString("status").equals("success"))
-			{
-				resp.setStatusCode(200).end();
+		if(login.succeeded())
+		{
+			entity_exists(entity)
+			.setHandler(entityExists -> {
 					
-			}
-			else
-			{
-				resp.setStatusCode(500).end("Error while running query");
-			}
+		if(entityExists.succeeded())
+		{
+			String query	=	"UPDATE users SET blocked = '"	+
+								blocked							+
+								"' WHERE id ='"					+
+								entity							+
+								"'"								;
+			dbService.runQuery(query, updateUserTable -> {
+							
+		if(updateUserTable.succeeded())
+		{
+			resp.setStatusCode(200).end();
 		}
 		else
 		{
-			resp.setStatusCode(500).end();
+			resp.setStatusCode(500).end("Could not update users table");
 		}
 	});
-}
+		}
+		else
+		{
+			resp.setStatusCode(403).end("No such entity");
+		}
+	});
+		}
 		else
 		{
 			resp.setStatusCode(403).end("Invalid id or apikey");
 		}
-			
-}
 	});
-}
-							
-							
-}
-	});				
-
 }
 
 	/**
@@ -1169,12 +936,12 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	 *         on completion.
 	 */
 	
-	private Future<Void> verifyentity(String registration_entity_id) 
+	private Future<Void> entity_exists(String registration_entity_id) 
 	{
-		Future<Void> verifyentity	=	Future.future();		
-		String query 				=	"SELECT * FROM users WHERE id = '"
-										+ registration_entity_id +	"'";
-		String columns				=	"id";
+		Future<Void> future	=	Future.future();		
+		String query		=	"SELECT * FROM users WHERE id = '"
+								+ registration_entity_id +	"'";
+		String columns		=	"id";
 		
 		queryObject.put("query", query);
 		queryObject.put("columns", columns);
@@ -1185,17 +952,45 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		{
 			if(reply.result().getInteger("rowCount")>0)
 			{
-				entity_already_exists 	= true;
+				future.complete();
 			}
 			else
 			{
-				entity_already_exists	= false;
+				future.fail("Entity does not exist");
 			}
 				
-			verifyentity.complete();
 		}
 	});
-		return verifyentity;
+		return future;
+	}
+	
+	private Future<Void> entity_does_not_exist(String registration_entity_id) 
+	{
+		Future<Void> future		=	Future.future();		
+		String query			=	"SELECT * FROM users WHERE id = '"
+									+ registration_entity_id +	"'";
+		String columns			=	"id";
+		
+		queryObject.put("query", query);
+		queryObject.put("columns", columns);
+		
+		dbService.selectQuery(query, columns, reply -> {
+			
+		if(reply.succeeded())
+		{
+			if(reply.result().getInteger("rowCount")>0)
+			{
+				future.fail("Entity exists");
+				
+			}
+			else
+			{
+				future.complete();
+			}
+				
+		}
+	});
+		return future;
 	}
 
 	/**
@@ -1489,9 +1284,9 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		 return create_broker_client;		
 	}
 	
-	public Future<Void> generate_credentials(String id, String schema, String autonomous) 
+	public Future<String> generate_credentials(String id, String schema, String autonomous) 
 	{
-		Future<Void> create_credentials = Future.future();
+		Future<String> create_credentials = Future.future();
 		
 		String apikey	=	genRandString(32);
 		String salt 	=	genRandString(32);
@@ -1514,8 +1309,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			
 		if(reply.succeeded())
 		{
-			generated_apikey = apikey;
-			create_credentials.complete();
+			create_credentials.complete(apikey);
 		}
 		else
 		{
@@ -1539,13 +1333,13 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 
 		if(id.equalsIgnoreCase("") || apikey.equalsIgnoreCase(""))
 		{
-			login_success = false;
+			check.fail("Invalid credentials");
 		}
 		
 		//TODO check if id conforms to the required format
 		if(!id.matches("[a-z0-9/]+"))
 		{
-			login_success = false;
+			check.fail("Invalid credentials");
 		}
 		
 		String query		=	"SELECT * FROM users WHERE id = '"
@@ -1562,35 +1356,31 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 				
 			if(queryResult.getInteger("rowCount")==0)
 			{
-				login_success	=	false;
+				check.fail("Not found");
 				check.complete();
 			}
 			else
 			{
-				JsonObject result 		= queryResult.getJsonObject("result");
+				JsonObject result 		=	queryResult.getJsonObject("result");
 					
-				String salt 			= result.getString("salt");
-				String string_to_hash	= apikey+salt+id;
-				String expected_hash 	= result.getString("password_hash");
-				String actual_hash 		= Hashing
-												.sha256()
-												.hashString(string_to_hash, StandardCharsets.UTF_8)
-												.toString();
+				String salt 			=	result.getString("salt");
+				String string_to_hash	=	apikey	+	salt	+	id;
+				String expected_hash 	= 	result.getString("password_hash");
+				String actual_hash 		= 	Hashing
+											.sha256()
+											.hashString(string_to_hash, StandardCharsets.UTF_8)
+											.toString();
 										
 				if(actual_hash.equals(expected_hash))
 				{
-					login_success 	= true;
 					check.complete();
 				}
 				else
 				{
-					login_success	= false;
-					check.complete();
+					check.fail("Invalid credentials");
 				}
-					
 			}
 		}
-			
 	});
 		
 	return check;
@@ -1598,8 +1388,48 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 
 	public boolean is_string_safe(String resource)
 	{
-		boolean safe = (resource.length() - (resource.replaceAll("[^-/a-zA-Z0-9]", "")).length())==0?true:false;
+		boolean safe = (resource.length() - (resource.replaceAll("[^-/a-zA-Z0-9]+", "")).length())==0?true:false;
+		System.out.println("Replaced = " + resource.replaceAll("[^-/a-zA-Z0-9]+", "") );
 		return safe;
+	}
+	
+	public boolean is_valid_owner(String owner_name)
+	{
+		if	(	(!Character.isDigit(owner_name.charAt(0)))
+									&&
+			(	(owner_name.length() - (owner_name.replaceAll("[^a-z0-9]+", "")).length())==0)
+			)
+		{
+			return true;
+		}
+		else
+		{
+			logger.info("Name = " + owner_name + " Replaced = " + owner_name.replaceAll("[^a-z0-9]+", ""));
+			return false;
+		}
+	}
+	
+	public boolean is_valid_entity(String resource)
+	{
+		String entries[]	=	resource.split("/");
+		
+		System.out.println("Entries = " + Arrays.asList(entries));
+		
+		if(entries.length!=2)
+		{
+			return false;
+		}
+		else if	(	(is_valid_owner(entries[0]))
+								&&
+					(is_string_safe(entries[1]))
+				)
+		{
+			return true;
+		}
+		else
+		{
+			return false;
+		}
 	}
 	
 }
