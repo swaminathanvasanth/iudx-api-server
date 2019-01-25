@@ -8,6 +8,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.rabbitmq.RabbitMQOptions;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import io.vertx.rabbitmq.RabbitMQClient;
 
 public class BrokerServiceImpl implements BrokerService
@@ -129,6 +130,10 @@ public class BrokerServiceImpl implements BrokerService
 				});
 				
 			}
+			else
+			{
+				resultHandler.handle(Future.failedFuture(ar.cause()));
+			}
 		});
 		
 		
@@ -178,6 +183,10 @@ public class BrokerServiceImpl implements BrokerService
 					}
 				});
 			}
+			else
+			{
+				resultHandler.handle(Future.failedFuture(ar.cause()));
+			}
 		});
 		
 		return this;
@@ -208,6 +217,10 @@ public class BrokerServiceImpl implements BrokerService
 						resultHandler.handle(Future.failedFuture(result.cause()));
 					}
 				});
+			}
+			else
+			{
+				resultHandler.handle(Future.failedFuture(ar.cause()));
 			}
 		});
 		
@@ -371,6 +384,10 @@ public class BrokerServiceImpl implements BrokerService
 						resultHandler.handle(Future.failedFuture(result.cause()));
 					}
 				});
+			}
+			else
+			{
+				resultHandler.handle(Future.failedFuture(ar.cause()));
 			}
 		});
 		
@@ -541,6 +558,10 @@ public class BrokerServiceImpl implements BrokerService
 					});
 				}
 			}
+			else
+			{
+				resultHandler.handle(Future.failedFuture(ar.cause()));
+			}
 		});
 		return this;
 	}
@@ -588,7 +609,79 @@ public class BrokerServiceImpl implements BrokerService
 				});
 		
 			}
+			else
+			{
+				resultHandler.handle(Future.failedFuture(ar.cause()));
+			}
 		});
+		return this;
+	}
+
+	@Override
+	public BrokerService bind(String queue, String exchange, String routingKey,
+	Handler<AsyncResult<Void>> resultHandler) 
+	{
+		Future<Void>	channel	=	getAdminChannel();
+		
+		channel.setHandler(ar -> {
+			
+			if(ar.succeeded())
+			{
+				RabbitMQClient adminChannel = adminpool.get("admin");
+				
+				adminChannel.queueBind(queue, exchange, routingKey, queueBind -> {
+					
+					if(queueBind.succeeded())
+					{
+						resultHandler.handle(Future.succeededFuture());
+					}
+					else
+					{
+						resultHandler.handle(Future.failedFuture("Error while binding"));
+					}
+				});
+			}
+			else
+			{
+				resultHandler.handle(Future.failedFuture(ar.cause()));
+			}
+		});
+
+		return this;
+	}
+
+	@Override
+	public BrokerService publish(String exchange, String routingKey, JsonObject message,
+	Handler<AsyncResult<Void>> resultHandler) 
+	{
+		Future<Void>	channel	=	getAdminChannel();
+		
+		channel.setHandler(ar -> {
+			
+			if(ar.succeeded())
+			{
+				RabbitMQClient adminChannel = adminpool.get("admin");
+				
+				adminChannel.basicPublish(exchange, routingKey, message, publish -> {
+					
+					if(publish.succeeded())
+					{
+						resultHandler.handle(Future.succeededFuture());
+					}
+					else
+					{
+						resultHandler.handle(Future.failedFuture(publish.cause()));
+					}
+					
+				});
+			}
+			else
+			{
+				resultHandler.handle(Future.failedFuture(ar.cause()));
+			}
+			
+		});
+		
 		return this;
 	}
 }

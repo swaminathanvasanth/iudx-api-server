@@ -36,8 +36,6 @@ public class DbServiceImpl implements DbService
 			{
 				PgConnection conn 	=  ar.result();
 				
-				System.out.println("Query = " + query);
-				
 				conn.preparedQuery(query, result -> {
 					
 					if(result.succeeded())
@@ -86,7 +84,19 @@ public class DbServiceImpl implements DbService
 							
 							for(String columnName:columns)
 							{	
-								queryResult.put(columnName, row.getString(columnName));
+								if(columnName.equals("is_autonomous"))
+								{
+									queryResult.put(columnName, row.getBoolean(columnName));
+								}
+								else if(columnName.equals("valid_till"))
+								{
+									queryResult.put(columnName, row.getLocalDateTime(columnName).toString());
+								}
+								else
+								{
+									queryResult.put(columnName, row.getString(columnName));
+								}
+								
 							}
 						}
 						else // executed only when querying for owner entities

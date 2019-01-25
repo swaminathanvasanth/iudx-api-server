@@ -216,25 +216,25 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		dbService			=	DbService.createProxy(vertx, "db.queue");
 		brokerService		=	BrokerService.createProxy(vertx, "broker.queue");
 		
-		HttpServer server 	= vertx.createHttpServer(new HttpServerOptions()
-									.setSsl(true)
-									.setKeyStoreOptions(new JksOptions()
-									.setPath("my-keystore.jks")
-									.setPassword("password")));
+		HttpServer server 	=	vertx.createHttpServer(new HttpServerOptions()
+								.setSsl(true)
+								.setKeyStoreOptions(new JksOptions()
+								.setPath("my-keystore.jks")
+								.setPassword("password")));
 		
 		server
-			.requestHandler(HttpServerVerticle.this)
-			.listen(port, ar -> {
+		.requestHandler(HttpServerVerticle.this)
+		.listen(port, ar -> {
 				
-				if(ar.succeeded())
-				{
-					startFuture.complete();
-				}
-				else
-				{
-					startFuture.fail(ar.cause());
-				}
-			});
+			if(ar.succeeded())
+			{
+				startFuture.complete();
+			}
+			else
+			{
+				startFuture.fail(ar.cause());
+			}
+		});
 
 		vertx.exceptionHandler(err -> {
 			err.printStackTrace();
@@ -354,7 +354,35 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 					resp.setStatusCode(404).end();
 				}
 				break;
-			
+				
+			case "/entity/bind":
+			case "/owner/bind" :
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					queue_bind(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
+			case "/entity/share":
+			case "/owner/share" :
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					share(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
 			default:
 				resp = event.response();
 				resp.setStatusCode(404).end();
@@ -410,6 +438,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 					
 		if(entityDoesNotExist.succeeded())
 		{
+			//TODO schema is null
 			generate_credentials(owner_name, "{}", "true")
 			.setHandler(generate_credentials -> {
 								
@@ -519,10 +548,10 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			String acl_query	=	"DELETE FROM acl WHERE"	+
 									" from_id LIKE '"		+	
 									owner_name				+	
-									"/%%'"					+
+									"/%'"					+
 									" OR exchange LIKE '"	+
 									owner_name				+
-									"/%%'"					;
+									"/%'"					;
 								
 			dbService.runQuery(acl_query, aclDelete -> {
 									
@@ -547,7 +576,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			String user_query	=	"DELETE FROM users WHERE"	+
 									" id LIKE '"				+	
 									owner_name					+	
-									"/%%'"						+
+									"/%'"						+
 									" OR id LIKE '"				+
 									owner_name					+
 									"'"							;
@@ -753,6 +782,12 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			return;
 		} 
 		
+		if(!is_owner(id, entity))
+		{
+			resp.setStatusCode(403).end("You are not the owner of the entity");
+			return;
+		}
+		
 		if(!is_valid_entity(entity))
 		{
 			resp.setStatusCode(403).end("Invalid entity");
@@ -778,7 +813,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 									entity						+
 									"' OR exchange LIKE '"		+
 									entity						+
-									".%%'"						;
+									".%'"						;
 			dbService.runQuery(acl_query, aclQuery -> {
 									
 		if(aclQuery.succeeded())
@@ -788,7 +823,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 									entity						+
 									"' OR exchange LIKE '"		+
 									entity						+
-									".%%'"						;
+									".%'"						;
 										
 			dbService.runQuery(follow_query, followQuery -> {
 											
@@ -880,6 +915,12 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			return;
 		}
 		
+		if(!is_owner(id, entity))
+		{
+			resp.setStatusCode(403).end("You are not the owner of the entity");
+			return;
+		}
+		
 		if(!is_valid_entity(entity))
 		{
 			resp.setStatusCode(400).end("Invalid entity");
@@ -924,6 +965,391 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			resp.setStatusCode(403).end("Invalid id or apikey");
 		}
 	});
+}
+	
+	private void queue_bind(HttpServerRequest req)
+	{
+		HttpServerResponse resp	=	req.response();
+		
+		//Mandatory headers
+		String id				=	req.getHeader("id");
+		String apikey			=	req.getHeader("apikey");
+		String to				=	req.getHeader("to");
+		String topic			=	req.getHeader("topic");
+		String message_type		=	req.getHeader("message-type");
+		
+		//Optional headers
+		String is_priority		=	req.getHeader("is-priority");
+		String from				=	req.getHeader("from");
+		
+		if	(		(id		==	null)
+							||
+					(apikey	==	null)
+							||
+					(to		==	null)
+							||
+					(topic	==	null)
+							||
+				(message_type	==	null)
+					
+			)
+			{
+				resp.setStatusCode(400).end("Inputs missing in headers");
+				return;
+			}
+		
+		if(!(is_valid_owner(id) ^ is_valid_entity(id)))
+		{
+			resp.setStatusCode(400).end("Invalid id");
+		}
+		if(is_valid_owner(id))
+		{
+			if(from	==	null)
+			{
+				resp.setStatusCode(403).end("'from' value missing in headers");
+				return;
+			}
+			
+			if(!is_owner(id, from))
+			{
+				resp.setStatusCode(403).end("You are not the owner of the 'from' entity");
+				return;
+			}
+			
+			if(!is_valid_entity(from))
+			{
+				resp.setStatusCode(403).end("'from' is not a valid entity");
+				return;
+			}
+		}
+		else
+		{
+			from	=	id;
+		}
+		
+		if	(	(!message_type.equals("public"))
+							&&
+				(!message_type.equals("private"))
+							&&
+				(!message_type.equals("protected"))
+							&&
+				(!message_type.equals("diagnostics"))
+			)
+		{
+			resp.setStatusCode(400).end("'message-type' is invalid");
+			return;
+		}
+		
+		if	(	(message_type.equals("private"))	
+							&&	
+					(!is_owner(id, to))	
+			)
+		{
+			resp.setStatusCode(403).end("You are not the owner of the 'to' entity");
+			return;
+		}
+		
+		if	(	(!is_string_safe(from))
+						||
+				(!is_string_safe(to))
+						||
+				(!is_string_safe(topic))
+			)
+		{
+			resp.setStatusCode(403).end("Invalid headers");
+			return;
+		}
+		
+		String queue	=	from;
+		
+		if(is_priority	!=	null)
+		{
+			if	(	(!is_priority.equals("true")
+								&&
+					(!is_priority.equals("false")))
+				)
+			{
+				resp.setStatusCode(403).end("Invalid is-priority header");
+				return;
+			}
+			else if(is_priority.equals("true"))
+			{
+				queue	=	queue	+	".priority";
+			}
+		}
+		
+		final String from_id		=	from;
+		final String exchange_name	=	to + "." + message_type;
+		final String queue_name		=	queue;
+		
+		check_login(id, apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			if(login.result())
+			{
+				if(!message_type.equals("public"))
+				{
+					if(!is_owner(id, to))
+					{
+						String acl_query	=	"SELECT * FROM acl WHERE		"	+
+												"from_id			=			'"	+
+												from_id								+
+												"' AND exchange		=			'"	+
+												exchange_name						+
+												"' AND permission	=	'read'	"	+
+												" AND valid_till > now()		"	+
+												" AND topic			=			'"	+
+												topic								+
+												"'"									;
+			
+						dbService.selectQuery(acl_query, "", aclQuery -> {
+				
+					if(aclQuery.succeeded())
+					{
+						//TODO: Handle possible null pointer exception here
+						if(aclQuery.result().getInteger("rowCount")==1)
+						{
+							brokerService.bind(queue_name, exchange_name, topic, bind -> {
+							
+								if(bind.succeeded())
+								{
+									resp.setStatusCode(200).end();
+									return;
+								}
+								else
+								{
+									resp.setStatusCode(500).end("Bind failed");
+									return;
+								}
+							});
+						}
+						else
+						{
+							resp.setStatusCode(403).end("Unauthorised");
+							return;
+						}
+					}
+					else
+					{
+						resp.setStatusCode(500).end("Could not query acl table");
+						return;
+					}
+				});
+					}
+					else
+					{
+						brokerService.bind(queue_name, exchange_name, topic, bind -> {
+								
+							if(bind.succeeded())
+							{
+								resp.setStatusCode(200).end();
+								return;
+							}
+							else
+							{
+								resp.setStatusCode(500).end("Bind failed");
+								return;
+							}
+				});
+					}
+						
+				}
+				else
+				{
+					brokerService.bind(queue_name, exchange_name, topic, bind -> {
+							
+						if(bind.succeeded())
+						{
+							resp.setStatusCode(200).end();
+							return;
+						}
+						else
+						{
+							resp.setStatusCode(500).end("Bind failed");
+							return;
+						}
+					});
+				}
+			}
+			else
+			{
+				resp.setStatusCode(403).end("Unauthorised");
+				return;
+			}
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}	
+	});	
+}
+	
+	private void share(HttpServerRequest req)
+	{
+		HttpServerResponse	resp	=	req.response();
+		String 	id					=	req.getHeader("id");
+		String 	apikey				=	req.getHeader("apikey");
+		String 	follow_id			=	req.getHeader("follow-id");
+		
+		
+		if	(	(id	==	null)
+						||
+				(apikey	==	null)
+						||
+				(follow_id	==	null)
+			)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
+		}
+		
+		String exchange_string	=	is_valid_owner(id)?(id+"/%.%"):(is_valid_entity(id))?id+".%":"";
+		
+		if(exchange_string	==	null)
+		{
+			resp.setStatusCode(403).end("Invalid id");
+			return;
+		}
+		
+		if(!is_string_safe(follow_id))
+		{
+			resp.setStatusCode(403).end("Invalid follow-id");
+			return;
+		}
+		
+		check_login(id, apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded() && login.result())
+		{
+			String follow_query	=	"SELECT * FROM follow WHERE follow_id	=	"	+
+									Integer.parseInt(follow_id)						+
+									" AND exchange LIKE 						'"	+
+									exchange_string									+
+									"' AND status	=	'pending'				"	;
+				
+			String columns		=	"from_id,exchange,permission,validity,topic";
+				
+			dbService.selectQuery(follow_query, columns, getDetails -> {
+					
+		if(getDetails.succeeded())
+		{
+			if(getDetails.result().getInteger("rowCount")==1)
+			{
+				JsonObject result	=	getDetails.result().getJsonObject("result");
+							
+				String from_id		=	result.getString("from_id");
+				String exchange		=	result.getString("exchange");
+				String permission	=	result.getString("permission");
+				String validity		=	result.getString("validity");
+				String topic		=	result.getString("topic");
+							
+				String from_query	=	"SELECT * FROM users WHERE id = '" + from_id + "'";
+							
+				dbService.selectQuery(from_query, "", fromQuery -> {
+								
+		if(fromQuery.succeeded())
+		{
+			if(fromQuery.result().getInteger("rowCount")==1)
+			{
+				String update_follow_query	=	"UPDATE follow SET status = 'approved' WHERE follow_id = " + follow_id;
+										
+				dbService.runQuery(update_follow_query, updateFollowQuery -> {
+											
+		if(updateFollowQuery.succeeded())
+		{
+			String acl_insert = "INSERT INTO acl VALUES("	+	"'"
+								+from_id					+	"','"
+								+exchange 					+	"','"
+								+permission					+	"',"
+								+"now() + interval '"		+
+								Integer.parseInt(validity) 	+
+								" hours'"					+	",'"
+								+follow_id					+	"','"
+								+topic						+	"',"
+								+"DEFAULT)"					;
+												
+												
+			dbService.runQuery(acl_insert, aclInsert -> {
+													
+		if(aclInsert.succeeded())
+		{
+			if(permission.equals("write"))
+			{
+				String publish_exchange	=	from_id + ".publish";
+				String publish_queue	=	exchange;
+				String publish_topic	=	exchange + "." + topic;
+															
+				brokerService.bind(publish_queue, publish_exchange, publish_topic, bind -> {
+																
+		if(bind.succeeded())
+		{
+			resp.setStatusCode(200).end();
+			return;
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Failed to bind");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(200).end();
+			return;
+		}	
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Failed to insert into acl table");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not update follow table");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid from id");
+			return;
+		}
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not query users table");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("No such follow request with follow id = " + follow_id);
+			return;
+		}
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not get follow details");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+	});
+		
 }
 
 	/**
@@ -992,6 +1418,21 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	});
 		return future;
 	}
+	
+	private boolean is_owner(String owner, String entity)
+	{
+		if	(	(entity.startsWith(owner))
+						&&
+				(entity.contains("/"))
+			)
+		{
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
 
 	/**
 	 * This method is the implementation of Publish API, which handles the
@@ -1044,7 +1485,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 
 	/**
 	 * This method is the implementation of Subscribe API, which handles the
-	 * subscription request by clients.
+	 * subscription request by clients.apikey
 	 * 
 	 * @param HttpServerRequest event - This is the handle for the incoming request
 	 *                          from client.
@@ -1327,9 +1768,9 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		return randStr;
 	}
 	
-	public Future<Void> check_login(String id, String apikey)
+	public Future<Boolean> check_login(String id, String apikey)
 	{
-		Future<Void> check = Future.future();
+		Future<Boolean> check = Future.future();
 
 		if(id.equalsIgnoreCase("") || apikey.equalsIgnoreCase(""))
 		{
@@ -1337,7 +1778,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		}
 		
 		//TODO check if id conforms to the required format
-		if(!id.matches("[a-z0-9/]+"))
+		if(id.matches("[^a-z0-9/]+"))
 		{
 			check.fail("Invalid credentials");
 		}
@@ -1373,7 +1814,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 										
 				if(actual_hash.equals(expected_hash))
 				{
-					check.complete();
+					check.complete(result.getBoolean("is_autonomous"));
 				}
 				else
 				{
@@ -1388,13 +1829,13 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 
 	public boolean is_string_safe(String resource)
 	{
-		boolean safe = (resource.length() - (resource.replaceAll("[^-/a-zA-Z0-9]+", "")).length())==0?true:false;
-		System.out.println("Replaced = " + resource.replaceAll("[^-/a-zA-Z0-9]+", "") );
+		boolean safe = (resource.length() - (resource.replaceAll("[^#-/a-zA-Z0-9]+", "")).length())==0?true:false;
 		return safe;
 	}
 	
 	public boolean is_valid_owner(String owner_name)
 	{
+		//TODO simplify this
 		if	(	(!Character.isDigit(owner_name.charAt(0)))
 									&&
 			(	(owner_name.length() - (owner_name.replaceAll("[^a-z0-9]+", "")).length())==0)
@@ -1404,7 +1845,6 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		}
 		else
 		{
-			logger.info("Name = " + owner_name + " Replaced = " + owner_name.replaceAll("[^a-z0-9]+", ""));
 			return false;
 		}
 	}
@@ -1412,8 +1852,6 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	public boolean is_valid_entity(String resource)
 	{
 		String entries[]	=	resource.split("/");
-		
-		System.out.println("Entries = " + Arrays.asList(entries));
 		
 		if(entries.length!=2)
 		{

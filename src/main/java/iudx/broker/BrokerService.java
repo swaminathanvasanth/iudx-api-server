@@ -7,6 +7,7 @@ import io.vertx.codegen.annotations.VertxGen;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import io.vertx.rabbitmq.RabbitMQOptions;
 
 @ProxyGen
@@ -30,6 +31,12 @@ public interface BrokerService
 	
 	@Fluent
 	BrokerService create_entity_bindings(String id, Handler<AsyncResult<Void>> resultHandler);
+	
+	@Fluent
+	BrokerService bind(String queue, String exchange, String routingKey, Handler<AsyncResult<Void>> resultHandler);
+	
+	@Fluent
+	BrokerService publish(String exchange, String routingKey, JsonObject message, Handler<AsyncResult<Void>> resultHandler);
 	
 	@GenIgnore
 	static BrokerService create(Vertx vertx, RabbitMQOptions options, Handler<AsyncResult<BrokerService>> resultHandler)

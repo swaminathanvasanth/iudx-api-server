@@ -45,7 +45,7 @@ public class MainVerticle extends AbstractVerticle
 			   vertx.deployVerticle(name, new DeploymentOptions()
 					   					  .setWorker(true)
 					   					  .setInstances(Runtime.getRuntime()
-					   					  .availableProcessors()), res -> {
+					   					  .availableProcessors()*2), res -> {
 			   if(res.succeeded()) 
 			   {
 				   logger.info("Deployed Verticle " + name);
