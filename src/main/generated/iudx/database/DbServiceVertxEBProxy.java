@@ -33,7 +33,7 @@ import io.vertx.serviceproxy.ServiceException;
 import io.vertx.serviceproxy.ServiceExceptionMessageCodec;
 import io.vertx.serviceproxy.ProxyUtils;
 
-import io.vertx.core.json.JsonObject;
+import java.util.List;
 import iudx.database.DbService;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
@@ -63,7 +63,7 @@ public class DbServiceVertxEBProxy implements DbService {
   }
 
   @Override
-  public  DbService runQuery(String query, Handler<AsyncResult<Void>> resultHandler){
+  public  DbService runQuery(String query, Handler<AsyncResult<List<String>>> resultHandler){
     if (closed) {
       resultHandler.handle(Future.failedFuture(new IllegalStateException("Proxy is closed")));
       return this;
@@ -73,32 +73,11 @@ public class DbServiceVertxEBProxy implements DbService {
 
     DeliveryOptions _deliveryOptions = (_options != null) ? new DeliveryOptions(_options) : new DeliveryOptions();
     _deliveryOptions.addHeader("action", "runQuery");
-    _vertx.eventBus().<Void>send(_address, _json, _deliveryOptions, res -> {
+    _vertx.eventBus().<JsonArray>send(_address, _json, _deliveryOptions, res -> {
       if (res.failed()) {
         resultHandler.handle(Future.failedFuture(res.cause()));
       } else {
-        resultHandler.handle(Future.succeededFuture(res.result().body()));
-      }
-    });
-    return this;
-  }
-  @Override
-  public  DbService selectQuery(String query, String column_list, Handler<AsyncResult<JsonObject>> resultHandler){
-    if (closed) {
-      resultHandler.handle(Future.failedFuture(new IllegalStateException("Proxy is closed")));
-      return this;
-    }
-    JsonObject _json = new JsonObject();
-    _json.put("query", query);
-    _json.put("column_list", column_list);
-
-    DeliveryOptions _deliveryOptions = (_options != null) ? new DeliveryOptions(_options) : new DeliveryOptions();
-    _deliveryOptions.addHeader("action", "selectQuery");
-    _vertx.eventBus().<JsonObject>send(_address, _json, _deliveryOptions, res -> {
-      if (res.failed()) {
-        resultHandler.handle(Future.failedFuture(res.cause()));
-      } else {
-        resultHandler.handle(Future.succeededFuture(res.result().body()));
+        resultHandler.handle(Future.succeededFuture(ProxyUtils.convertList(res.result().body().getList())));
       }
     });
     return this;

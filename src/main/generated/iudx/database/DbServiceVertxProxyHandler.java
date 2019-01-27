@@ -41,7 +41,7 @@ import io.vertx.serviceproxy.ServiceException;
 import io.vertx.serviceproxy.ServiceExceptionMessageCodec;
 import io.vertx.serviceproxy.HelperUtils;
 
-import io.vertx.core.json.JsonObject;
+import java.util.List;
 import iudx.database.DbService;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
@@ -117,13 +117,7 @@ public class DbServiceVertxProxyHandler extends ProxyHandler {
       switch (action) {
         case "runQuery": {
           service.runQuery((java.lang.String)json.getValue("query"),
-                        HelperUtils.createHandler(msg));
-          break;
-        }
-        case "selectQuery": {
-          service.selectQuery((java.lang.String)json.getValue("query"),
-                        (java.lang.String)json.getValue("column_list"),
-                        HelperUtils.createHandler(msg));
+                        HelperUtils.createListHandler(msg));
           break;
         }
         default: throw new IllegalStateException("Invalid action: " + action);

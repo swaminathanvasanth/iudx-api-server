@@ -42,6 +42,7 @@ import io.vertx.serviceproxy.ServiceExceptionMessageCodec;
 import io.vertx.serviceproxy.HelperUtils;
 
 import iudx.broker.BrokerService;
+import io.vertx.core.json.JsonObject;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
 /*
@@ -141,6 +142,20 @@ public class BrokerServiceVertxProxyHandler extends ProxyHandler {
         }
         case "create_entity_bindings": {
           service.create_entity_bindings((java.lang.String)json.getValue("id"),
+                        HelperUtils.createHandler(msg));
+          break;
+        }
+        case "bind": {
+          service.bind((java.lang.String)json.getValue("queue"),
+                        (java.lang.String)json.getValue("exchange"),
+                        (java.lang.String)json.getValue("routingKey"),
+                        HelperUtils.createHandler(msg));
+          break;
+        }
+        case "publish": {
+          service.publish((java.lang.String)json.getValue("exchange"),
+                        (java.lang.String)json.getValue("routingKey"),
+                        (io.vertx.core.json.JsonObject)json.getValue("message"),
                         HelperUtils.createHandler(msg));
           break;
         }

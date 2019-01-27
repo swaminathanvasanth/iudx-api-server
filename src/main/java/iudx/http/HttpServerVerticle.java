@@ -17,11 +17,11 @@ package iudx.http;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 import org.apache.commons.lang3.RandomStringUtils;
 
@@ -31,7 +31,9 @@ import io.reactiverse.pgclient.PgClient;
 import io.reactiverse.pgclient.PgIterator;
 import io.reactiverse.pgclient.PgPool;
 import io.reactiverse.pgclient.PgPoolOptions;
-import io.reactiverse.reactivex.pgclient.Tuple;
+import io.reactiverse.pgclient.PgRowSet;
+import io.reactiverse.pgclient.Row;
+import io.reactiverse.pgclient.Tuple;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.AsyncResult;
@@ -45,6 +47,8 @@ import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.logging.Logger;
+import io.vertx.core.logging.LoggerFactory;
 import io.vertx.core.net.JksOptions;
 import io.vertx.rabbitmq.RabbitMQClient;
 import io.vertx.rabbitmq.RabbitMQOptions;
@@ -65,7 +69,7 @@ import iudx.database.DbService;
 
 public class HttpServerVerticle extends AbstractVerticle implements  Handler<HttpServerRequest>
 {
-	private final static Logger logger = Logger.getLogger(HttpServerVerticle.class.getName());
+	private final static Logger logger = LoggerFactory.getLogger(HttpServerVerticle.class);
 
 	private HttpServer server;
 	
@@ -83,19 +87,9 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	/** Handles the message-type header in the HTTP Publish API request */
 	private String message_type;
 	
-	private boolean 		login_success;
-	private JsonObject 		queryObject;
-	private boolean 		autonomous;
 	private String 			schema;
 	private DbService 		dbService;
 	private BrokerService	brokerService;
-
-	/** Handles the owner / entity header in the HTTP Registration API request */
-	private String requested_entity;
-	/** Handles the updated entity name from the HTTP Registration API request */
-	private String registration_entity_id;
-	/** A boolean variable (FLAG) used for handling the ID availability */
-	boolean entity_already_exists;
 	
 	/** Handles the Vert.x RabbitMQ client HashMap ID */
 	private String connection_pool_id;	
@@ -132,19 +126,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	/**  Handles the virtual host to be used to connect with RabbitMQ server */
 	public static String broker_vhost;
 	
+	//Characters to be used by APIKey generator while generating apikey 
 	private static final String PASSWORDCHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-";
-	
-	
-	// Used in registration API for apikey generation
-	/**  Characters to be used by APIKey generator while generating apikey */
-	
-	/** Handles the generated apikey for the HTTP Registration API request */
-	private String generated_apikey;
-	/** Handles the generated apikey hash for the HTTP Registration API request */
-	private String apikey_hash;
-	/** Handles the generated apikey hash (in bytes) for the HTTP Registration API request */
-	private byte[] hash;
-	/** A MessageDigest object used for creating the apikey hash */
 	
 	// Used in subscribe API
 	/**  Handles the read data object for HTTP subscribe request */
@@ -196,10 +179,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	@Override
 	public void start(Future<Void> startFuture) throws Exception 
-	{
-		/**  Defines the port at which the apiserver should run */
-		
-		logger.setLevel(Level.INFO);
+	{	
+		logger.debug("In start");
 		
 		int port 			= 	8443;
 		
@@ -208,10 +189,6 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		broker_vhost 		= 	URLs.getBrokerVhost();
 		broker_username 	= 	URLs.getBrokerUsername();
 		broker_password		= 	URLs.getBrokerPassword();
-		
-		queryObject			= 	new JsonObject();
-		login_success		= 	false;
-		autonomous 			= 	false;
 		
 		dbService			=	DbService.createProxy(vertx, "db.queue");
 		brokerService		=	BrokerService.createProxy(vertx, "broker.queue");
@@ -228,10 +205,12 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 				
 			if(ar.succeeded())
 			{
+				logger.debug("Server started");
 				startFuture.complete();
 			}
 			else
 			{
+				logger.debug("Could not start server. Cause="+ar.cause());
 				startFuture.fail(ar.cause());
 			}
 		});
@@ -263,6 +242,10 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	@Override
 	public void handle(HttpServerRequest event) 
 	{
+		logger.debug("In handle method");
+		
+		logger.debug("Event path="+event.path());
+		
 		switch (event.path()) 
 		{
 			case "/admin/register-owner":
@@ -402,10 +385,16 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private void register_owner(HttpServerRequest req) 
 	{
+		logger.debug("In register owner");
+		
 		HttpServerResponse resp		=	req.response();
 		String id					=	req.getHeader("id");
 		String apikey				=	req.getHeader("apikey");
 		String owner_name			=	req.getHeader("owner");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("owner="+owner_name);
 		
 		if(		(id == null)
 					||
@@ -433,25 +422,35 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			
 		if(login.succeeded())
 		{
+			logger.debug("Login ok");
+			
 			entity_does_not_exist(owner_name)
 			.setHandler(entityDoesNotExist -> {
 					
 		if(entityDoesNotExist.succeeded())
 		{
+			logger.debug("Owner does not exist");
+			
 			//TODO schema is null
 			generate_credentials(owner_name, "{}", "true")
 			.setHandler(generate_credentials -> {
 								
 		if(generate_credentials.succeeded())
 		{
+			logger.debug("Generated credetials for owner");
+			
 			brokerService.create_owner_resources(owner_name, broker_create -> {
 											
 		if(broker_create.succeeded())
 		{
+			logger.debug("Created owner resources");
+			
 			brokerService.create_owner_bindings(owner_name, broker_bind -> {
 			
 		if(broker_bind.succeeded())
 		{
+			logger.debug("Created owner bindings. All ok");
+			
 			JsonObject response = new JsonObject();
 			response.put("id", owner_name);
 			response.put("apikey", generate_credentials.result());
@@ -459,6 +458,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		}
 		else
 		{
+			
 			resp.setStatusCode(500).end("Could not create bindings");
 		}
 			
@@ -506,10 +506,16 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private void de_register_owner(HttpServerRequest req) 
 	{
+		logger.debug("In deregister_owner");
+		
 		HttpServerResponse resp		= req.response();
 		String id 					= req.getHeader("id");
 		String apikey 				= req.getHeader("apikey");
 		String owner_name 			= req.getHeader("owner");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("owner="+owner_name);
 		
 		if(		(id == null)
 					||
@@ -519,6 +525,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		)
 		{
 			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
 		}
 		
 		if (!id.equalsIgnoreCase("admin")) 
@@ -537,14 +544,19 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			
 		if(login.succeeded())
 		{
+			logger.debug("Login ok");
 			entity_exists(owner_name).setHandler(ownerExists -> {
 					
 		if(ownerExists.succeeded())
 		{
+			logger.debug("Owner exists");
+			
 			brokerService.delete_owner_resources(owner_name, delete_owner_resources -> {
 							
 		if(delete_owner_resources.succeeded())
 		{
+			logger.debug("Deleted owner resources from broker");
+			
 			String acl_query	=	"DELETE FROM acl WHERE"	+
 									" from_id LIKE '"		+	
 									owner_name				+	
@@ -557,22 +569,40 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 									
 		if(aclDelete.succeeded())
 		{
+			logger.debug("Deleted owner entries from acl table");
+			
 			String entity_query	=	"SELECT * FROM users WHERE"	+
 						    		" id LIKE '"				+	
-						    		owner_name					+								    					  "/%%'";
-									
-			String columns		=	"id";
+						    		owner_name					+								    					  
+						    		"/%'"						;
 										
-			dbService.selectQuery(entity_query, columns, ids -> {
+			dbService.runQuery(entity_query, ids -> {
 											
 		if(ids.succeeded())
-		{			
-			String id_list	=	ids.result().getJsonObject("result").getString("id");
+		{	
+			List<String> resultList	=	ids.result();
+			
+			String id_list	=	"";
+			
+			for(String row:resultList)
+			{
+				String processed_row[]	=	row.substring(row.indexOf("[")+1, row.indexOf("]")).trim().split(",\\s");
+				
+				logger.debug("Processed row="+Arrays.asList(processed_row));
+				
+				id_list	=	id_list	+	processed_row[0]	+	",";
+			}
+			
+			id_list	=	id_list.substring(0,id_list.length()-1);
+			
+			logger.debug("id_list="+id_list);
 												
 			brokerService.delete_entity_resources(id_list, deleteEntities -> {
 												
 		if(deleteEntities.succeeded())
 		{
+			logger.debug("Deleted entity resources from broker");
+			
 			String user_query	=	"DELETE FROM users WHERE"	+
 									" id LIKE '"				+	
 									owner_name					+	
@@ -585,47 +615,57 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 															
 		if(deleteUsers.succeeded())
 		{
+			logger.debug("Deleted entities from users table. All ok");
+			
 			resp.setStatusCode(200).end();
+			return;
 		}
 		else
 		{
 			resp.setStatusCode(500).end("Could not delete from users' table");
+			return;
 		}
 	});
 		}
 		else
 		{
 			resp.setStatusCode(500).end("Could not delete owner entities");
+			return;
 		}
 	});
 		}
 		else
 		{
 			resp.setStatusCode(500).end("Could not get entities belonging to owner");
+			return;
 		}
 	});
 		}
 		else
 		{
 			resp.setStatusCode(500).end("Could not delete from acl table");
+			return;
 		}
 	});
 		}
 		else
 		{
 			resp.setStatusCode(500).end("Could not delete owner resources");
+			return;
 		}
 	});
 		}
 		else
 		{
 			resp.setStatusCode(403).end("No such owner");
+			return;
 		}
 	});
 		}
 		else
 		{
 			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
 		}
 			
 	});
@@ -644,6 +684,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	//TODO: Try Future Compose?
 	private void register(HttpServerRequest req) 
 	{
+		logger.debug("In register entity");
+		
 		HttpServerResponse resp	=	req.response();
 		String id 				=	req.getHeader("id");
 		String apikey			=	req.getHeader("apikey");
@@ -671,9 +713,21 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			return;
 		}
 		
+		logger.debug("id="+id+"\napikey="+apikey+"\nentity="+entity+"\nis-autonomous="+autonomous_flag);
+		
 		//TODO: Check if body is null
 		req.bodyHandler(body -> {
 			schema = body.toString();
+			logger.debug("schema="+schema);
+			try
+			{
+				JsonObject test	=	new JsonObject(schema);
+			}
+			catch (Exception e)
+			{
+				resp.setStatusCode(403).end("Body must be a valid JSON");
+				return;
+			}
 		});	
 		
 		if(	  (id == null)
@@ -691,12 +745,14 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		// Check if ID is owner
 		if (!is_valid_owner(id)) 
 		{
+			logger.debug("owner is invalid");
 			resp.setStatusCode(403).end("Invalid owner");
 			return;
 		} 
 		
 		if(!is_string_safe(entity))
 		{
+			logger.debug("invalid entity name");
 			resp.setStatusCode(400).end("Invalid entity name");
 			return;
 		}
@@ -705,23 +761,28 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			
 		if(login.succeeded())
 		{
+			logger.debug("login ok");
 			entity_does_not_exist(full_entity_name).setHandler(entityDoesNotExist -> {
 					
 		if(entityDoesNotExist.succeeded())
 		{
+			logger.debug("entity does not exist");
 			generate_credentials(full_entity_name, schema, autonomous_flag)
 			.setHandler(genCredentials -> {
 							
 		if(genCredentials.succeeded())
 		{
+			logger.debug("credentials generated");
 			brokerService.create_entity_resources(full_entity_name, createEntityResources -> {
 									
 		if(createEntityResources.succeeded())
 		{
+			logger.debug("resources created");
 			brokerService.create_entity_bindings(full_entity_name, createEntityBindings -> {
 										
 		if(createEntityBindings.succeeded())
 		{
+			logger.debug("all ok");
 			JsonObject response = new JsonObject();
 			response.put("id", full_entity_name);
 			response.put("apikey", genCredentials.result());
@@ -730,31 +791,41 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		}
 		else
 		{
+			logger.debug(createEntityBindings.cause());
 			resp.setStatusCode(500).end("Could not create bindings");
+			return;
 		}		
 	});
 		}
 		else
 		{
+			logger.debug(createEntityResources.cause());
 			resp.setStatusCode(500).end("Could not create exchanges and queues");
+			return;
 		}
 	});
 		}
 		else
 		{
+			logger.debug(genCredentials.cause());
 			resp.setStatusCode(500).end("Could not generate entity credentials");
+			return;
 		}
 	});
 		}
 		else
 		{
+			logger.debug(entityDoesNotExist.cause());
 			resp.setStatusCode(409).end("ID already used");
+			return;
 		}
 	});
 		}
 		else
 		{
+			logger.debug(login.cause());
 			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
 		}
 	});	
 }
@@ -770,10 +841,14 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private void de_register(HttpServerRequest req) 
 	{
+		logger.debug("In deregister entity");
+		
 		HttpServerResponse resp =	req.response();
 		String id 				=	req.getHeader("id");
 		String apikey			=	req.getHeader("apikey");
 		String entity			=	req.getHeader("entity");
+		
+		logger.debug("id="+id+"\napikey="+apikey+"\nentity="+entity);
 
 		// Check if ID is owner
 		if (!is_valid_owner(id)) 
@@ -799,15 +874,20 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			
 		if(login.succeeded())
 		{
+			logger.debug("login ok");
+			
 			entity_exists(entity)
 			.setHandler(entityExists -> {
 					
 		if(entityExists.succeeded())
 		{
+			logger.debug("entity exists");
 			brokerService.delete_entity_resources(entity, deleteEntityResources -> {
 							
 		if(deleteEntityResources.succeeded())
 		{
+			logger.debug("Entity resources deleted");
+			
 			String acl_query	=	"DELETE FROM acl WHERE "	+
 									"from_id = '"				+
 									entity						+
@@ -818,6 +898,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 									
 		if(aclQuery.succeeded())
 		{
+			logger.debug("Deleted from acl");
+			
 			String follow_query	=	"DELETE FROM follow WHERE "	+
 									" requested_by = '"			+
 									entity						+
@@ -829,6 +911,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 											
 		if(followQuery.succeeded())
 		{
+			logger.debug("Deleted from follow");
+			
 			String user_query	=	"DELETE FROM users WHERE "	+
 									" id = '"					+
 									entity						+
@@ -838,34 +922,41 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 													
 		if(userQuery.succeeded())
 		{
+			logger.debug("all ok");
+			
 			resp.setStatusCode(200).end();
 		}
 		else
 		{
+			logger.debug("Could not delete from users. Cause="+userQuery.cause());
 			resp.setStatusCode(500).end("Could not delete from users");
 		}
 	});
 		}
 		else
 		{
+			logger.debug("Could not delete from follow. Cause="+followQuery.cause());
 			resp.setStatusCode(500).end("Could not delete from follow");
 		}
 	});
 		}
 		else
 		{
+			logger.debug("Could not delete from acl. Cause="+aclQuery.cause());
 			resp.setStatusCode(500).end("Could not delete from acl");
 		}	
 	});
 		}
 		else
 		{
+			logger.debug("Could not delete entity resources. Cause="+deleteEntityResources.cause());
 			resp.setStatusCode(500).end("Could not delete exchanges and queues");
 		}
 	});
 		}
 		else
 		{
+			logger.debug("No such entity. Cause="+entityExists.cause());
 			resp.setStatusCode(400).end("No such entity");
 		}
 					
@@ -873,6 +964,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		}
 		else
 		{
+			logger.debug("invalid credentials. Cause="+login.cause());
 			resp.setStatusCode(403).end("Invalid id or apikey");
 		}
 	});
@@ -892,10 +984,16 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private void block(HttpServerRequest req, String blocked) 
 	{
+		logger.debug("In block/unblock API");
+		
 		HttpServerResponse resp	=	req.response();
 		String id				=	req.getHeader("id");
 		String apikey			=	req.getHeader("apikey");
 		String entity			=	req.getHeader("entity");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("entity="+entity);
 		
 		if(   
 			(id == null)
@@ -932,11 +1030,15 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			
 		if(login.succeeded())
 		{
+			logger.debug("Login ok");
+			
 			entity_exists(entity)
 			.setHandler(entityExists -> {
 					
 		if(entityExists.succeeded())
 		{
+			logger.debug("Entity exists");
+			
 			String query	=	"UPDATE users SET blocked = '"	+
 								blocked							+
 								"' WHERE id ='"					+
@@ -946,29 +1048,37 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 							
 		if(updateUserTable.succeeded())
 		{
+			logger.debug("Updated users table. All ok");
+			
 			resp.setStatusCode(200).end();
+			return;
 		}
 		else
 		{
 			resp.setStatusCode(500).end("Could not update users table");
+			return;
 		}
 	});
 		}
 		else
 		{
 			resp.setStatusCode(403).end("No such entity");
+			return;
 		}
 	});
 		}
 		else
 		{
 			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
 		}
 	});
 }
 	
 	private void queue_bind(HttpServerRequest req)
 	{
+		logger.debug("In queue_bind");
+		
 		HttpServerResponse resp	=	req.response();
 		
 		//Mandatory headers
@@ -981,6 +1091,15 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		//Optional headers
 		String is_priority		=	req.getHeader("is-priority");
 		String from				=	req.getHeader("from");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("to="+to);
+		logger.debug("topic="+topic);
+		logger.debug("message-type="+message_type);
+		
+		logger.debug("is-priorty="+is_priority);
+		logger.debug("from="+from);
 		
 		if	(		(id		==	null)
 							||
@@ -1087,12 +1206,20 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			
 		if(login.succeeded())
 		{
+			logger.debug("Login ok");
+			
 			if(login.result())
 			{
+				logger.debug("Autonomous ok");
+				
 				if(!message_type.equals("public"))
 				{
+					logger.debug("Message type is not public");
+					
 					if(!is_owner(id, to))
 					{
+						logger.debug("Id is not the owner of to");
+						
 						String acl_query	=	"SELECT * FROM acl WHERE		"	+
 												"from_id			=			'"	+
 												from_id								+
@@ -1104,17 +1231,19 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 												topic								+
 												"'"									;
 			
-						dbService.selectQuery(acl_query, "", aclQuery -> {
+						dbService.runQuery(acl_query, aclQuery -> {
 				
 					if(aclQuery.succeeded())
 					{
 						//TODO: Handle possible null pointer exception here
-						if(aclQuery.result().getInteger("rowCount")==1)
+						if(aclQuery.result().size()==1)
 						{
 							brokerService.bind(queue_name, exchange_name, topic, bind -> {
 							
 								if(bind.succeeded())
 								{
+									logger.debug("Bound. All ok");
+									
 									resp.setStatusCode(200).end();
 									return;
 								}
@@ -1140,10 +1269,14 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 					}
 					else
 					{
+						logger.debug("Id is the owner of to");
+						
 						brokerService.bind(queue_name, exchange_name, topic, bind -> {
 								
 							if(bind.succeeded())
 							{
+								logger.debug("Bound. All ok");
+								
 								resp.setStatusCode(200).end();
 								return;
 							}
@@ -1158,10 +1291,14 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 				}
 				else
 				{
+					logger.debug("Message type is public");
+					
 					brokerService.bind(queue_name, exchange_name, topic, bind -> {
 							
 						if(bind.succeeded())
 						{
+							logger.debug("Bound. All ok");
+							
 							resp.setStatusCode(200).end();
 							return;
 						}
@@ -1189,10 +1326,16 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private void share(HttpServerRequest req)
 	{
+		logger.debug("In share API");
+		
 		HttpServerResponse	resp	=	req.response();
 		String 	id					=	req.getHeader("id");
 		String 	apikey				=	req.getHeader("apikey");
 		String 	follow_id			=	req.getHeader("follow-id");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("follow-id="+follow_id);
 		
 		
 		if	(	(id	==	null)
@@ -1223,44 +1366,69 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		check_login(id, apikey)
 		.setHandler(login -> {
 			
-		if(login.succeeded() && login.result())
+		if(login.succeeded())
 		{
+			logger.debug("Login ok");
+			
+			if(!login.result())
+			{
+				resp.setStatusCode(403).end("Unauthorised");
+				return;
+			}
+			
+			logger.debug("Autonomous ok");
+			
 			String follow_query	=	"SELECT * FROM follow WHERE follow_id	=	"	+
 									Integer.parseInt(follow_id)						+
 									" AND exchange LIKE 						'"	+
 									exchange_string									+
 									"' AND status	=	'pending'				"	;
 				
-			String columns		=	"from_id,exchange,permission,validity,topic";
-				
-			dbService.selectQuery(follow_query, columns, getDetails -> {
+			dbService.runQuery(follow_query, getDetails -> {
 					
 		if(getDetails.succeeded())
 		{
-			if(getDetails.result().getInteger("rowCount")==1)
+			List<String> resultList		=	getDetails.result();
+			int rowCount				=	resultList.size();
+			
+			if(rowCount==1)
 			{
-				JsonObject result	=	getDetails.result().getJsonObject("result");
+				String row				=	resultList.get(0);
+				
+				String	processed_row[]	=	row.substring(row.indexOf("[")+1, row.indexOf("]")).trim().split(",\\s");
+				
+				String from_id			=	processed_row[0];
+				String exchange			=	processed_row[2];
+				String permission		=	processed_row[4];
+				String topic			=	processed_row[5];
+				String validity			=	processed_row[6];
+				
+				logger.debug("from_id="+from_id);
+				logger.debug("exchange="+exchange);
+				logger.debug("permission="+permission);
+				logger.debug("topic="+topic);
+				logger.debug("validity="+validity);
 							
-				String from_id		=	result.getString("from_id");
-				String exchange		=	result.getString("exchange");
-				String permission	=	result.getString("permission");
-				String validity		=	result.getString("validity");
-				String topic		=	result.getString("topic");
+				String from_query		=	"SELECT * FROM users WHERE id = '" + from_id + "'";
 							
-				String from_query	=	"SELECT * FROM users WHERE id = '" + from_id + "'";
-							
-				dbService.selectQuery(from_query, "", fromQuery -> {
+				dbService.runQuery(from_query, fromQuery -> {
 								
 		if(fromQuery.succeeded())
 		{
-			if(fromQuery.result().getInteger("rowCount")==1)
+			logger.debug("From query ok");
+			
+			if(fromQuery.result().size()==1)
 			{
+				logger.debug("Found from entity");
+				
 				String update_follow_query	=	"UPDATE follow SET status = 'approved' WHERE follow_id = " + follow_id;
 										
 				dbService.runQuery(update_follow_query, updateFollowQuery -> {
 											
 		if(updateFollowQuery.succeeded())
 		{
+			logger.debug("Update follow ok");
+			
 			String acl_insert = "INSERT INTO acl VALUES("	+	"'"
 								+from_id					+	"','"
 								+exchange 					+	"','"
@@ -1277,8 +1445,12 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 													
 		if(aclInsert.succeeded())
 		{
+			logger.debug("Insert into acl ok");
+			
 			if(permission.equals("write"))
 			{
+				logger.debug("Permission is write");
+				
 				String publish_exchange	=	from_id + ".publish";
 				String publish_queue	=	exchange;
 				String publish_topic	=	exchange + "." + topic;
@@ -1287,6 +1459,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 																
 		if(bind.succeeded())
 		{
+			logger.debug("Bound. All ok");
+			
 			resp.setStatusCode(200).end();
 			return;
 		}
@@ -1299,6 +1473,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		}
 		else
 		{
+			logger.debug("All ok");
+			
 			resp.setStatusCode(200).end();
 			return;
 		}	
@@ -1364,27 +1540,27 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private Future<Void> entity_exists(String registration_entity_id) 
 	{
+		logger.debug("In entity does not exist");
+		
 		Future<Void> future	=	Future.future();		
 		String query		=	"SELECT * FROM users WHERE id = '"
 								+ registration_entity_id +	"'";
-		String columns		=	"id";
 		
-		queryObject.put("query", query);
-		queryObject.put("columns", columns);
-		
-		dbService.selectQuery(query, columns, reply -> {
+		dbService.runQuery(query, reply -> {
 			
 		if(reply.succeeded())
-		{
-			if(reply.result().getInteger("rowCount")>0)
+		{	
+			List<String> resultList	=	reply.result();
+			int rowCount			=	resultList.size();
+			
+			if(rowCount>0)
 			{
 				future.complete();
 			}
 			else
 			{
 				future.fail("Entity does not exist");
-			}
-				
+			}		
 		}
 	});
 		return future;
@@ -1392,22 +1568,22 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	private Future<Void> entity_does_not_exist(String registration_entity_id) 
 	{
+		logger.debug("in entity does not exist");
+		
 		Future<Void> future		=	Future.future();		
 		String query			=	"SELECT * FROM users WHERE id = '"
 									+ registration_entity_id +	"'";
-		String columns			=	"id";
 		
-		queryObject.put("query", query);
-		queryObject.put("columns", columns);
-		
-		dbService.selectQuery(query, columns, reply -> {
+		dbService.runQuery(query, reply -> {
 			
 		if(reply.succeeded())
 		{
-			if(reply.result().getInteger("rowCount")>0)
+			List<String> resultList	=	reply.result();
+			int rowCount			=	resultList.size();
+		
+			if(rowCount>0)
 			{
-				future.fail("Entity exists");
-				
+				future.fail("Entity exists");	
 			}
 			else
 			{
@@ -1415,12 +1591,22 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			}
 				
 		}
+		else
+		{
+			logger.debug(reply.cause());
+			future.fail("Could not get entity details");
+		}
 	});
 		return future;
 	}
 	
 	private boolean is_owner(String owner, String entity)
 	{
+		logger.debug("In is_owner");
+		
+		logger.debug("Owner="+owner);
+		logger.debug("Entity="+entity);
+		
 		if	(	(entity.startsWith(owner))
 						&&
 				(entity.contains("/"))
@@ -1446,6 +1632,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 
 	private void publish(HttpServerRequest request) {
 		
+		//TODO: Add proper validation
 		request.bodyHandler(body -> {
 			message = body.toJsonObject();
 		});
@@ -1697,8 +1884,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 
 	public Future<RabbitMQClient> getRabbitMQClient(String connection_pool_id, String username, String password) 
 	{
-		create_broker_client = Future.future();
-		broker_config = new RabbitMQOptions();
+		create_broker_client	=	Future.future();
+		broker_config			=	new RabbitMQOptions();
 		
 		broker_config.setHost(broker_url);
 		broker_config.setPort(broker_port);
@@ -1727,6 +1914,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	public Future<String> generate_credentials(String id, String schema, String autonomous) 
 	{
+		logger.debug("In generate credentials");
+		
 		Future<String> create_credentials = Future.future();
 		
 		String apikey	=	genRandString(32);
@@ -1737,6 +1926,12 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		String hash				=	Hashing.sha256()
 									.hashString(string_to_hash, StandardCharsets.UTF_8)
 									.toString();
+		
+		logger.debug("Id="+id);
+		logger.debug("Generated apikey="+apikey);
+		logger.debug("Salt="+salt);
+		logger.debug("String to hash="+string_to_hash);
+		logger.debug("Hash="+hash);
 		
 		String query = "INSERT INTO users VALUES('"
 						+id			+	"','"
@@ -1750,26 +1945,40 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			
 		if(reply.succeeded())
 		{
+			logger.debug("Generate credentials query succeeded");
 			create_credentials.complete(apikey);
 		}
 		else
 		{
+			logger.debug("Failed to run query. Cause="+reply.cause());
 			create_credentials.fail(reply.cause().toString());
 		}
-
+		
 	});
-	
+		
 		return create_credentials;
 	}
 	
 	public String genRandString(int len)
 	{
-		String randStr = RandomStringUtils.random(len, 0, PASSWORDCHARS.length(), true, true, PASSWORDCHARS.toCharArray());
+		logger.debug("In genRandString");
+		
+		String randStr	=	RandomStringUtils
+							.random(len, 0, PASSWORDCHARS.length(), 
+							true, true, PASSWORDCHARS.toCharArray());
+		
+		logger.debug("Generated random string = "+randStr);
+		
 		return randStr;
 	}
 	
 	public Future<Boolean> check_login(String id, String apikey)
 	{
+		logger.debug("In check_login");
+		
+		logger.debug("ID="+id);
+		logger.debug("Apikey="+apikey);
+		
 		Future<Boolean> check = Future.future();
 
 		if(id.equalsIgnoreCase("") || apikey.equalsIgnoreCase(""))
@@ -1777,49 +1986,62 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			check.fail("Invalid credentials");
 		}
 		
-		//TODO check if id conforms to the required format
-		if(id.matches("[^a-z0-9/]+"))
+		if(!(is_valid_owner(id) ^ is_valid_entity(id)))
 		{
 			check.fail("Invalid credentials");
 		}
 		
-		String query		=	"SELECT * FROM users WHERE id = '"
-								+	id	+ "'"
-								+	"AND blocked = 'f'";
+		String query		=	"SELECT * FROM users WHERE id	=	'"	+
+								id		+ 							"'"	+
+								"AND blocked = 'f'"						;
 		
-		String columns		=	"salt,password_hash,is_autonomous";
-		
-		dbService.selectQuery(query, columns, reply -> {
+		dbService.runQuery(query, reply -> {
 			
 		if(reply.succeeded())
-		{
-			JsonObject queryResult = reply.result();
-				
-			if(queryResult.getInteger("rowCount")==0)
+		{	
+			List<String> resultList	=	reply.result();
+			int rowCount			=	resultList.size();
+			
+			if(rowCount==0)
 			{
 				check.fail("Not found");
-				check.complete();
 			}
-			else
+			
+			else if(rowCount==1)
 			{
-				JsonObject result 		=	queryResult.getJsonObject("result");
-					
-				String salt 			=	result.getString("salt");
+				String raw				=	resultList.get(0);
+				String row[] 			=	raw
+											.substring(	raw.indexOf("[")+1, 
+														raw.indexOf("]"))
+											.split(",\\s");
+
+				String salt 			=	row[3];
 				String string_to_hash	=	apikey	+	salt	+	id;
-				String expected_hash 	= 	result.getString("password_hash");
+				String expected_hash 	= 	row[1];
 				String actual_hash 		= 	Hashing
 											.sha256()
 											.hashString(string_to_hash, StandardCharsets.UTF_8)
 											.toString();
+				
+				boolean autonomous		=	row[5].equals("true")?true:false;
+				
+				logger.debug("Salt ="+salt);
+				logger.debug("String to hash="+string_to_hash);
+				logger.debug("Expected hash ="+expected_hash);
+				logger.debug("Actual hash ="+actual_hash);
 										
 				if(actual_hash.equals(expected_hash))
 				{
-					check.complete(result.getBoolean("is_autonomous"));
+					check.complete(autonomous);
 				}
 				else
 				{
 					check.fail("Invalid credentials");
 				}
+			}
+			else
+			{
+				check.fail("Something is terribly wrong");
 			}
 		}
 	});
@@ -1829,29 +2051,44 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 
 	public boolean is_string_safe(String resource)
 	{
+		logger.debug("In is_string_safe");
+		
 		boolean safe = (resource.length() - (resource.replaceAll("[^#-/a-zA-Z0-9]+", "")).length())==0?true:false;
+		
+		logger.debug("Original resource name ="+resource);
+		logger.debug("Replaced resource name ="+resource.replaceAll("[^#-/a-zA-Z0-9]+", ""));
 		return safe;
 	}
 	
 	public boolean is_valid_owner(String owner_name)
 	{
+		logger.debug("In is_valid_owner");
+		
 		//TODO simplify this
 		if	(	(!Character.isDigit(owner_name.charAt(0)))
 									&&
 			(	(owner_name.length() - (owner_name.replaceAll("[^a-z0-9]+", "")).length())==0)
 			)
 		{
+			logger.debug("Original owner name = "+owner_name);
+			logger.debug("Replaced name = "+owner_name.replaceAll("[^a-z0-9]+", ""));
 			return true;
 		}
 		else
 		{
+			logger.debug("Original owner name = "+owner_name);
+			logger.debug("Replaced name = "+owner_name.replaceAll("[^a-z0-9]+", ""));
 			return false;
 		}
 	}
 	
 	public boolean is_valid_entity(String resource)
 	{
+		logger.debug("In is_valid_entity");
+		
 		String entries[]	=	resource.split("/");
+		
+		logger.debug("Entries = "+Arrays.asList(entries));
 		
 		if(entries.length!=2)
 		{

@@ -11,7 +11,6 @@ import iudx.broker.BrokerVerticle;
 import iudx.database.DbVerticle;
 import iudx.http.HttpServerVerticle;
 
-
 public class MainVerticle extends AbstractVerticle
 {	
 	private final static Logger logger = Logger.getLogger(MainVerticle.class.getName());
@@ -31,6 +30,7 @@ public class MainVerticle extends AbstractVerticle
 				}
 				else
 				{
+					System.out.println(ar.cause());
 					startFuture.fail(ar.cause().toString());
 				}
 			})
@@ -65,7 +65,7 @@ public class MainVerticle extends AbstractVerticle
 			   {
 			      if(res.failed())
 			      {
-			         logger.severe("Failed to deploy verticle" + name);
+			         logger.severe("Failed to deploy verticle " + name + " Cause = "+res.cause());
 			         future.fail(res.cause());
 			      } 
 			      else 
