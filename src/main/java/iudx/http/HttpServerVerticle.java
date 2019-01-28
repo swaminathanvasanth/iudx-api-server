@@ -366,6 +366,114 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 				}
 				break;
 				
+			case "/owner/entities" :
+				
+				if(event.method().toString().equalsIgnoreCase("GET")) 
+				{
+					entities(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
+			case "/owner/reset-apikey" :
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					reset_apikey(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+			
+			case "/owner/set-autonomous" :
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					set_autonomous(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+			
+			case "/admin/owners" :
+				
+				if(event.method().toString().equalsIgnoreCase("GET")) 
+				{
+					owners(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
+			case "/entity/follow-requests":
+			case "/owner/follow-requests" :
+				
+				if(event.method().toString().equalsIgnoreCase("GET")) 
+				{
+					follow_requests(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
+			case "/entity/follow-status":
+			case "/owner/follow-status" :
+				
+				if(event.method().toString().equalsIgnoreCase("GET")) 
+				{
+					follow_status(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
+			case "/entity/reject-follow":
+			case "/owner/reject-follow" :
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					reject_follow(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
+			case "/entity/permissions":
+			case "/owner/permissions" :
+				
+				if(event.method().toString().equalsIgnoreCase("GET")) 
+				{
+					permissions(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
 			default:
 				resp = event.response();
 				resp.setStatusCode(404).end();
@@ -939,8 +1047,8 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 			resp.setStatusCode(500).end("Could not delete from follow");
 		}
 	});
-		}
-		else
+		} 
+		else // if (! aclQuery.succeeded())
 		{
 			logger.debug("Could not delete from acl. Cause="+aclQuery.cause());
 			resp.setStatusCode(500).end("Could not delete from acl");
@@ -1397,7 +1505,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 				
 				String	processed_row[]	=	row.substring(row.indexOf("[")+1, row.indexOf("]")).trim().split(",\\s");
 				
-				String from_id			=	processed_row[0];
+				String from_id			=	processed_row[1];
 				String exchange			=	processed_row[2];
 				String permission		=	processed_row[4];
 				String topic			=	processed_row[5];
@@ -1528,98 +1636,734 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		
 }
 
-	/**
-	 * This method is used to verify if the requested registration entity is already
-	 * registered.
-	 * 
-	 * @param String registration_entity_id - This is the handle for the incoming
-	 *               request header (entity) from client.
-	 * @return Future<String> verifyentity - This is a callable Future which notifies
-	 *         on completion.
-	 */
-	
-	private Future<Void> entity_exists(String registration_entity_id) 
+	public void entities(HttpServerRequest req)
 	{
-		logger.debug("In entity does not exist");
+		logger.debug("In entities API");
 		
-		Future<Void> future	=	Future.future();		
-		String query		=	"SELECT * FROM users WHERE id = '"
-								+ registration_entity_id +	"'";
+		HttpServerResponse resp	=	req.response();
 		
-		dbService.runQuery(query, reply -> {
-			
-		if(reply.succeeded())
-		{	
-			List<String> resultList	=	reply.result();
-			int rowCount			=	resultList.size();
-			
-			if(rowCount>0)
-			{
-				future.complete();
-			}
-			else
-			{
-				future.fail("Entity does not exist");
-			}		
-		}
-	});
-		return future;
-	}
-	
-	private Future<Void> entity_does_not_exist(String registration_entity_id) 
-	{
-		logger.debug("in entity does not exist");
+		String id				=	req.getHeader("id");
+		String apikey			=	req.getHeader("apikey");
 		
-		Future<Void> future		=	Future.future();		
-		String query			=	"SELECT * FROM users WHERE id = '"
-									+ registration_entity_id +	"'";
-		
-		dbService.runQuery(query, reply -> {
-			
-		if(reply.succeeded())
-		{
-			List<String> resultList	=	reply.result();
-			int rowCount			=	resultList.size();
-		
-			if(rowCount>0)
-			{
-				future.fail("Entity exists");	
-			}
-			else
-			{
-				future.complete();
-			}
-				
-		}
-		else
-		{
-			logger.debug(reply.cause());
-			future.fail("Could not get entity details");
-		}
-	});
-		return future;
-	}
-	
-	private boolean is_owner(String owner, String entity)
-	{
-		logger.debug("In is_owner");
-		
-		logger.debug("Owner="+owner);
-		logger.debug("Entity="+entity);
-		
-		if	(	(entity.startsWith(owner))
-						&&
-				(entity.contains("/"))
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+
+		if	(	(id	==	null)
+						||
+				(apikey	==	null)
 			)
 		{
-			return true;
+			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
+		}
+		
+		if(!is_valid_owner(id))
+		{
+			resp.setStatusCode(403).end("id is not valid");
+			return;
+		}
+		
+		check_login(id, apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			logger.debug("Login ok");
+				
+			if(!login.result())
+			{
+				resp.setStatusCode(403).end("Unauthorised");
+				return;
+			}
+				
+			logger.debug("Autonomous ok");
+				
+			String users_query	=	"SELECT * FROM users WHERE id LIKE '" + id + "/%'";
+			
+			dbService.runQuery(users_query, query -> {
+					
+		if(query.succeeded())
+		{
+			List<String> resultList	=	query.result();
+						
+			JsonArray response		=	new JsonArray();
+						
+			for(String row:resultList)
+			{
+				String	processed_row[]	=	row.substring(row.indexOf("[")+1, row.indexOf("]")).trim().split(",\\s");
+							
+				logger.debug("Processed row ="+Arrays.asList(processed_row));
+							
+				JsonObject entity		=	new JsonObject();
+							
+				entity.put("id", processed_row[0]);
+				entity.put("is-autonomous", processed_row[5]);
+							
+				response.add(entity);
+			}
+			
+			logger.debug("All ok");
+			
+			resp
+			.putHeader("content-type", "application/json")
+			.setStatusCode(200)
+			.end(response.encodePrettily());
 		}
 		else
 		{
-			return false;
+			resp.setStatusCode(500).end("Could not get entities' details");
+			return;
 		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+	});
+}
+	public void reset_apikey(HttpServerRequest req)
+	{
+		logger.debug("In reset apikey");
+		
+		HttpServerResponse resp	=	req.response();
+		
+		String	id				=	req.getHeader("id");
+		String 	apikey			=	req.getHeader("apikey");
+		String	entity			=	req.getHeader("entity");
+		
+		if	(		(id	==	null)
+						||
+				(apikey	==	null)
+						||
+				(entity	==	null)
+			)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
+		}
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("entity="+entity);
+		
+		if(!is_valid_owner(id))
+		{
+			resp.setStatusCode(403).end("id is not valid");
+			return;
+		}
+		
+		if(!is_valid_entity(entity))
+		{
+			resp.setStatusCode(403).end("entity is not valid");
+			return;
+		}
+		
+		if(!is_owner(id, entity))
+		{
+			resp.setStatusCode(403).end("You are not the owner of the entity");
+			return;
+		}
+		
+		check_login(id, apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			logger.debug("Login ok");
+				
+			update_credentials(entity)
+			.setHandler(update -> {
+					
+		if(update.succeeded())
+		{
+			logger.debug("All ok");
+						
+			JsonObject response	=	new JsonObject();
+						
+			response.put("id", entity);
+			response.put("apikey", update.result());
+						
+			resp
+			.putHeader("content-type", "application/json")
+			.setStatusCode(200)
+			.end(response.encodePrettily());
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not reset apikey");
+			return;
+		}
+	});	
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+	});
+}
+	
+	public void set_autonomous(HttpServerRequest req)
+	{
+		logger.debug("In set autonomous");
+		
+		HttpServerResponse	resp	=	req.response();
+		String	id					=	req.getHeader("id");
+		String	apikey				=	req.getHeader("apikey");
+		String 	entity				=	req.getHeader("entity");
+		String 	autonomous			=	req.getHeader("is-autonomous");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("entity="+entity);
+		logger.debug("is-autonomous="+autonomous);
+		
+		if	(	(id			==	null)
+							||
+				(apikey		==	null)
+							||
+				(entity		==	null)
+							||
+				(autonomous	==	null)
+			)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
+		}
+		
+		if(!is_valid_owner(id))
+		{
+			resp.setStatusCode(403).end("id is not valid");
+			return;
+		}
+		
+		if(!is_valid_entity(entity))
+		{
+			resp.setStatusCode(403).end("entity is not valid");
+			return;
+		}
+		
+		if	(	!(	(autonomous.equals("true"))
+							||
+					(autonomous.equals("false"))
+				)
+			)
+		{
+			resp.setStatusCode(400).end("Invalid is-autonomous header");
+			return;
+		}
+		
+		if(!is_owner(id, entity))
+		{
+			resp.setStatusCode(403).end("You are not the owner of the entity");
+			return;
+		}
+		
+		check_login(id,apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			logger.debug("Login ok");
+				
+			String	query	=	"UPDATE users SET is_autonomous	=	'"	+
+								autonomous								+
+								"' WHERE id						=	'"	+
+								entity									+
+								"'"										;
+				
+			dbService.runQuery(query, queryResult -> {
+					
+		if(queryResult.succeeded())
+		{
+			logger.debug("All ok");
+			
+			resp.setStatusCode(200).end();
+			return;
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not update is-autonomous value");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+		
+		});
 	}
-
+	
+	public void owners(HttpServerRequest req)
+	{
+		logger.debug("In owners API");
+		
+		HttpServerResponse resp	=	req.response();
+		String	id				=	req.getHeader("id");
+		String	apikey			=	req.getHeader("apikey");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		
+		if(!id.equals("admin"))
+		{
+			resp.setStatusCode(403).end();
+			return;
+		}
+		
+		check_login(id,apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			logger.debug("Login ok");
+				
+			String user_query	=	"SELECT * FROM users WHERE id NOT LIKE '%/%'";
+				
+			dbService.runQuery(user_query, query -> {
+					
+		if(query.succeeded())
+		{
+			List<String> list	=	query.result();
+						
+			JsonArray response	=	new JsonArray();
+						
+			for(String row:list)
+			{
+				String	processed_row[]	=	row.substring(row.indexOf("[")+1, row.indexOf("]")).trim().split(",\\s");
+							
+				logger.debug("Processed row ="+Arrays.asList(processed_row));
+							
+				response.add(processed_row[0]);
+			}
+			
+			logger.debug("All ok");
+			
+			resp
+			.putHeader("content-type", "application/json")
+			.setStatusCode(200)
+			.end(response.encodePrettily());
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not get owner details");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+	});
+}
+	
+	public void follow_requests	(HttpServerRequest req)
+	{
+		logger.debug("In follow-requests API");
+		
+		HttpServerResponse resp	=	req.response();
+		
+		String	id				=	req.getHeader("id");
+		String 	apikey			=	req.getHeader("apikey");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		
+		if	(	(id		==	null)
+						||
+				(apikey	==	null)
+			)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
+		}
+		
+		if	(	!	(	(is_valid_owner(id))
+								^
+						(is_valid_entity(id))
+					)	
+			)
+		{
+			resp.setStatusCode(403).end("Invalid id");
+			return;
+		}
+		
+		String exchange_string	=	is_valid_owner(id)?(id+"/%.%"):(is_valid_entity(id))?id+".%":"";
+		
+		check_login(id, apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			logger.debug("Login ok");
+				
+			if(!login.result())
+			{
+				resp.setStatusCode(403).end("Unauthorised");
+				return;
+			}
+				
+			logger.debug("Autonomous ok");
+				
+			String follow_query	=	"SELECT * FROM follow WHERE exchange LIKE '"	+
+									exchange_string 								+
+									"' AND status = 'pending' ORDER BY TIME"		;
+				
+			dbService.runQuery(follow_query, query -> {
+					
+		if(query.succeeded())
+		{
+			List<String>	list		=	query.result();
+			JsonArray		response	=	new JsonArray();
+						
+			for(String row:list)
+			{
+				String	processed_row[]	=	row.substring(row.indexOf("[")+1, row.indexOf("]")).trim().split(",\\s");
+							
+				logger.debug("Processed row ="+Arrays.asList(processed_row));
+							
+				JsonObject temp	=	new JsonObject();
+							
+				temp.put("follow-id", processed_row[0]);
+				temp.put("from", processed_row[1]);
+				temp.put("to", processed_row[2]);
+				temp.put("time", processed_row[3]);
+				temp.put("permission", processed_row[4]);
+				temp.put("topic", processed_row[5]);
+				temp.put("validity", processed_row[6]);
+							
+				response.add(temp);
+			}
+						
+			logger.debug("All ok");
+						
+			resp
+			.putHeader("content-type", "application/json")
+			.setStatusCode(200)
+			.end(response.encodePrettily());
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not get follow requests' details");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+	});
+}
+	
+	public void follow_status(HttpServerRequest req)
+	{
+		logger.debug("In follow-status API");
+		
+		HttpServerResponse resp	=	req.response();
+		
+		String	id				=	req.getHeader("id");
+		String 	apikey			=	req.getHeader("apikey");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		
+		if	(	(id		==	null)
+						||
+				(apikey	==	null)
+			)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
+		}
+		
+		if	(	!	(	(is_valid_owner(id))
+								^
+						(is_valid_entity(id))
+					)	
+			)
+		{
+			resp.setStatusCode(403).end("Invalid id");
+			return;
+		}
+		
+		String from_string	=	is_valid_owner(id)?(id+"/%"):(is_valid_entity(id))?id:"";
+		
+		check_login(id, apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			logger.debug("Login ok");
+				
+			if(!login.result())
+			{
+				resp.setStatusCode(403).end("Unauthorised");
+				return;
+			}
+				
+			logger.debug("Autonomous ok");
+				
+			String follow_query	=	"SELECT * FROM follow WHERE from_id LIKE '"	+
+									from_string 								+
+									"' ORDER BY TIME"	;
+				
+			dbService.runQuery(follow_query, query -> {
+					
+		if(query.succeeded())
+		{
+			List<String>	list		=	query.result();
+			JsonArray		response	=	new JsonArray();
+						
+			for(String row:list)
+			{
+				String	processed_row[]	=	row.substring(row.indexOf("[")+1, row.indexOf("]")).trim().split(",\\s");
+							
+				logger.debug("Processed row ="+Arrays.asList(processed_row));
+							
+				JsonObject temp	=	new JsonObject();
+							
+				temp.put("follow-id", processed_row[0]);
+				temp.put("from", processed_row[1]);
+				temp.put("to", processed_row[2]);
+				temp.put("time", processed_row[3]);
+				temp.put("permission", processed_row[4]);
+				temp.put("topic", processed_row[5]);
+				temp.put("validity", processed_row[6]);
+				temp.put("status", processed_row[7]);
+							
+				response.add(temp);
+			}
+						
+			logger.debug("All ok");
+						
+			resp
+			.putHeader("content-type", "application/json")
+			.setStatusCode(200)
+			.end(response.encodePrettily());
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not get follow requests' details");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+	});
+}
+	
+	public void reject_follow(HttpServerRequest req)
+	{
+		logger.debug("In reject follow");
+		
+		HttpServerResponse resp	=	req.response();
+		String	id				=	req.getHeader("id");
+		String	apikey			=	req.getHeader("apikey");
+		String	follow_id		=	req.getHeader("follow-id");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("follow-id="+follow_id);
+		
+		
+		if	(	(id			==	null)
+							||
+				(apikey		==	null)
+							||
+				(follow_id	==	null)
+			)
+		{
+			resp.setStatusCode(403).end("Inputs missing in headers");
+			return;
+		}
+		
+		if(!is_string_safe(follow_id))
+		{
+			resp.setStatusCode(400).end("Invalid follow-id");
+			return;
+		}
+		
+		String exchange_string	=	is_valid_owner(id)?(id+"/%.%"):(is_valid_entity(id))?id+".%":"";
+		
+		check_login(id,apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			logger.debug("Login ok");
+				
+			if(!login.result())
+			{
+				resp.setStatusCode(403).end("Unauthorised");
+				return;
+			}
+				
+			logger.debug("Autonomous ok");
+				
+			String follow_query	=	"SELECT * FROM follow WHERE follow_id	=	'"	+
+										follow_id										+
+										"' AND exchange LIKE 						'"	+
+										exchange_string									+
+										"' AND status = 'pending'"						;
+				
+			dbService.runQuery(follow_query, query -> {
+					
+		if(query.succeeded())
+		{
+			if(query.result().size()!=1)
+			{
+				resp.setStatusCode(400).end("Follow-id is not valid");
+				return;
+			}
+						
+			logger.debug("Follow-id is valid");
+						
+			String update_query	=	"UPDATE follow SET status	=	'rejected'"	+
+									"WHERE follow_id			=	'"			+
+									follow_id									+
+									"'"											;
+						
+			dbService.runQuery(update_query, updateQuery -> {
+							
+		if(updateQuery.succeeded())
+		{
+			logger.debug("All ok");
+								
+			resp.setStatusCode(200).end();
+			return;
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not run update query on follow");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not get follow details");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+	});
+}
+	
+	public void permissions(HttpServerRequest req)
+	{
+		logger.debug("In permissions");
+		
+		HttpServerResponse	resp	=	req.response();
+		
+		String	id					=	req.getHeader("id");
+		String	apikey				=	req.getHeader("apikey");
+		String	entity				=	req.getHeader("entity");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		
+		if	(	(id		==	null)
+						||
+				(apikey	==	null)
+			)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
+		}
+		
+		if	(	!	(	(is_valid_owner(id))
+								^
+						(is_valid_entity(id))
+					)	
+			)
+		{
+			resp.setStatusCode(403).end("Invalid id");
+			return;
+		}
+		
+		if(is_valid_owner(id))
+		{
+			if(entity	==	null)
+			{
+				resp.setStatusCode(400).end("Entity value not specified in headers");
+				return;
+			}
+			
+			if(!is_owner(id, entity))
+			{
+				resp.setStatusCode(403).end("You are not the owner of the entity");
+				return;
+			}
+		}
+		
+		String from_id	=	(is_valid_owner(id))?entity:(is_valid_entity(id)?id:"");
+		
+		check_login(id,apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			String 	acl_query	=	"SELECT * FROM acl WHERE from_id	=	'"	+
+									from_id										+
+									"' AND valid_till > now()"					;
+				
+			dbService.runQuery(acl_query, query -> {
+					
+		if(query.succeeded())
+		{
+			List<String>	list		=	query.result();
+			JsonArray 		response	=	new JsonArray();
+						
+			for(String row:list)
+			{
+				String	processed_row[]	=	row.substring(row.indexOf("[")+1, row.indexOf("]")).trim().split(",\\s");
+							
+				logger.debug("Processed row ="+Arrays.asList(processed_row));
+										
+				JsonObject temp	=	new JsonObject();
+							
+				temp.put("entity", processed_row[1]);
+				temp.put("permission", processed_row[2]);
+							
+				response.add(temp);
+			}
+					
+			logger.debug("All ok");
+						
+			resp
+			.putHeader("content-type", "application/json")
+			.setStatusCode(200)
+			.end(response.encodePrettily());
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+	});
+		
+}
+	
 	/**
 	 * This method is the implementation of Publish API, which handles the
 	 * publication request by clients.
@@ -1912,15 +2656,107 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		 return create_broker_client;		
 	}
 	
+	/**
+	 * This method is used to verify if the requested registration entity is already
+	 * registered.
+	 * 
+	 * @param String registration_entity_id - This is the handle for the incoming
+	 *               request header (entity) from client.
+	 * @return Future<String> verifyentity - This is a callable Future which notifies
+	 *         on completion.
+	 */
+	
+	private Future<Void> entity_exists(String registration_entity_id) 
+	{
+		logger.debug("In entity does not exist");
+		
+		Future<Void> future	=	Future.future();		
+		String query		=	"SELECT * FROM users WHERE id = '"
+								+ registration_entity_id +	"'";
+		
+		dbService.runQuery(query, reply -> {
+			
+		if(reply.succeeded())
+		{	
+			List<String> resultList	=	reply.result();
+			int rowCount			=	resultList.size();
+			
+			if(rowCount>0)
+			{
+				future.complete();
+			}
+			else
+			{
+				future.fail("Entity does not exist");
+			}		
+		}
+	});
+		return future;
+	}
+	
+	private Future<Void> entity_does_not_exist(String registration_entity_id) 
+	{
+		logger.debug("in entity does not exist");
+		
+		Future<Void> future		=	Future.future();		
+		String query			=	"SELECT * FROM users WHERE id = '"
+									+ registration_entity_id +	"'";
+		
+		dbService.runQuery(query, reply -> {
+			
+		if(reply.succeeded())
+		{
+			List<String> resultList	=	reply.result();
+			int rowCount			=	resultList.size();
+		
+			if(rowCount>0)
+			{
+				future.fail("Entity exists");	
+			}
+			else
+			{
+				future.complete();
+			}
+				
+		}
+		else
+		{
+			logger.debug(reply.cause());
+			future.fail("Could not get entity details");
+		}
+	});
+		return future;
+	}
+	
+	private boolean is_owner(String owner, String entity)
+	{
+		logger.debug("In is_owner");
+		
+		logger.debug("Owner="+owner);
+		logger.debug("Entity="+entity);
+		
+		if	(	(entity.startsWith(owner))
+						&&
+				(entity.contains("/"))
+			)
+		{
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
+	
 	public Future<String> generate_credentials(String id, String schema, String autonomous) 
 	{
 		logger.debug("In generate credentials");
 		
-		Future<String> create_credentials = Future.future();
+		Future<String> future	= Future.future();
 		
-		String apikey	=	genRandString(32);
-		String salt 	=	genRandString(32);
-		String blocked 	=	"f";
+		String apikey			=	genRandString(32);
+		String salt 			=	genRandString(32);
+		String blocked 			=	"f";
 		
 		String string_to_hash	=	apikey + salt + id;
 		String hash				=	Hashing.sha256()
@@ -1933,31 +2769,73 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		logger.debug("String to hash="+string_to_hash);
 		logger.debug("Hash="+hash);
 		
-		String query = "INSERT INTO users VALUES('"
-						+id			+	"','"
-						+hash		+	"','"
-						+schema 	+	"','"
-						+salt		+ 	"','"
-						+blocked	+	"','"
-						+autonomous +	"')";
+		String query			=	"INSERT INTO users VALUES('"
+									+id			+	"','"
+									+hash		+	"','"
+									+schema 	+	"','"
+									+salt		+ 	"','"
+									+blocked	+	"','"
+									+autonomous +	"')";
 		
 		dbService.runQuery(query, reply -> {
 			
 		if(reply.succeeded())
 		{
 			logger.debug("Generate credentials query succeeded");
-			create_credentials.complete(apikey);
+			future.complete(apikey);
 		}
 		else
 		{
 			logger.debug("Failed to run query. Cause="+reply.cause());
-			create_credentials.fail(reply.cause().toString());
+			future.fail(reply.cause().toString());
 		}
 		
 	});
 		
-		return create_credentials;
+		return future;
 	}
+	
+	public Future<String> update_credentials(String id)
+	{
+		logger.debug("In update credentials");
+		
+		Future<String> future	=	Future.future();
+
+		String apikey			=	genRandString(32);
+		String salt 			=	genRandString(32);
+		
+		String string_to_hash	=	apikey + salt + id;
+		String hash				=	Hashing.sha256()
+									.hashString(string_to_hash, StandardCharsets.UTF_8)
+									.toString();
+		
+		logger.debug("Id="+id);
+		logger.debug("Generated apikey="+apikey);
+		logger.debug("Salt="+salt);
+		logger.debug("String to hash="+string_to_hash);
+		logger.debug("Hash="+hash);
+		
+		String update_query		=	"UPDATE users SET password_hash	=	'" 
+									+	hash	+	"',	salt	=		'" 
+									+ 	salt	+	"' WHERE id	=		'"
+									+	id		+	"'"					;														
+		
+		dbService.runQuery(update_query, reply -> {
+			
+		if(reply.succeeded())
+		{
+			logger.debug("Update credentials query succeeded");
+			future.complete(apikey);
+		}
+		else
+		{
+			logger.debug("Failed to run query. Cause="+reply.cause());
+			future.fail(reply.cause().toString());
+		}
+	});
+		
+		return future;
+}
 	
 	public String genRandString(int len)
 	{
