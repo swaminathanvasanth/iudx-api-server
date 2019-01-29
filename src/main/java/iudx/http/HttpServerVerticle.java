@@ -273,7 +273,33 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 					resp.setStatusCode(404).end();
 				}
 				break;
-		
+
+			case "/admin/block_owner":
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					block_owner(event, "t");
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+
+			case "/admin/unblock_owner":
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					block_owner(event, "f");
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+				
 			case "/entity/publish":
 				publish(event);
 				break;
@@ -1178,6 +1204,94 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		else
 		{
 			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+	});
+}
+	
+	
+	private void block_owner(HttpServerRequest req, String blocked) 
+	{
+		logger.debug("In block/unblock owner API");
+		
+		HttpServerResponse resp	=	req.response();
+		String id				=	req.getHeader("id");
+		String apikey			=	req.getHeader("apikey");
+		String entity			=	req.getHeader("entity");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("entity="+entity);
+		
+		if(   
+			(id == null)
+				  ||
+			(apikey == null)
+				  ||
+			(entity == null)
+		)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
+		}
+		
+		
+		if (!id.equalsIgnoreCase("admin")) 
+		{
+			resp.setStatusCode(403).end();
+			return;
+		}
+		
+		if(!is_valid_owner(entity))
+		{
+			resp.setStatusCode(400).end("Owner name is invalid");
+		}
+
+		check_login(id,apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			logger.debug("Login ok");
+			
+			entity_exists(entity)
+			.setHandler(entityExists -> {
+					
+		if(entityExists.succeeded())
+		{
+			logger.debug("Entity exists");
+			
+			String query	=	"UPDATE users SET blocked = '"	+
+								blocked							+
+								"' WHERE id ='"					+
+								entity							+
+								"'"								;
+			dbService.runQuery(query, updateUserTable -> {
+							
+		if(updateUserTable.succeeded())
+		{
+			logger.debug("Updated users table. All ok");
+			
+			resp.setStatusCode(200).end();
+			return;
+		}
+		else
+		{
+			resp.setStatusCode(500).end("Could not update users table");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("No such owner");
+			return;
+		}
+	});
+		}
+		else
+		{
+			resp.setStatusCode(403).end("Invalid credentials");
 			return;
 		}
 	});
