@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -128,6 +129,7 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 	
 	//Characters to be used by APIKey generator while generating apikey 
 	private static final String PASSWORDCHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-";
+	private static final String FOLLOW_ID_CHARS = "123456789";
 	
 	// Used in subscribe API
 	/**  Handles the read data object for HTTP subscribe request */
@@ -370,6 +372,19 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 				if(event.method().toString().equalsIgnoreCase("POST")) 
 				{
 					queue_bind(event);
+				} 
+				else 
+				{
+					resp = event.response();
+					resp.setStatusCode(404).end();
+				}
+				break;
+
+			case "/entity/follow" :
+				
+				if(event.method().toString().equalsIgnoreCase("POST")) 
+				{
+					follow(event);
 				} 
 				else 
 				{
@@ -1545,6 +1560,149 @@ public class HttpServerVerticle extends AbstractVerticle implements  Handler<Htt
 		}	
 	});	
 }
+	
+	private void follow(HttpServerRequest req) {
+		logger.debug("In follow API");
+		
+		HttpServerResponse	resp	=	req.response();
+		String 	id					=	req.getHeader("id");
+		String 	apikey				=	req.getHeader("apikey");
+		String 	to			=	req.getHeader("to");
+		String 	message_type			=	req.getHeader("message-type");
+		String 	topic			=	req.getHeader("topic");
+		String 	validity			=	req.getHeader("validity");
+		String 	permission			=	req.getHeader("permission");
+		
+		logger.debug("id="+id);
+		logger.debug("apikey="+apikey);
+		logger.debug("to="+to);
+		
+		if	(	(id	==	null)
+						||
+				(apikey	==	null)
+						||
+				(to	==	null)
+						||
+				(message_type	==	null)
+						||
+				(topic	==	null)
+						||
+				(validity	==	null)
+						||
+				(permission	==	null)
+			)
+		{
+			resp.setStatusCode(400).end("Inputs missing in headers");
+			return;
+		}
+		
+		from = req.getHeader("from");
+		
+		if((from	==	null))
+		{
+			from = id;
+		}
+		
+		check_login(id, apikey)
+		.setHandler(login -> {
+			
+		if(login.succeeded())
+		{
+			logger.debug("Login ok");
+			
+		// Check if the requested follow entity exists
+		entity_exists(to).setHandler(entityExists -> {
+				
+		if(entityExists.succeeded())
+		{
+			if (permission.equalsIgnoreCase("read")  || 
+				permission.equalsIgnoreCase("write") ||
+				permission.equalsIgnoreCase("read-write")) 
+			{
+			try 
+
+			{
+				Integer.parseInt(validity);
+
+				String follow_id = RandomStringUtils.random(8, 0, FOLLOW_ID_CHARS.length(), true,
+						true, FOLLOW_ID_CHARS.toCharArray());
+
+				// Insert into Follow Table and send a notification
+				String status = "pending";
+				String subject = "follow-request";
+
+				String follow_query	=	"INSERT INTO follow VALUES ('"
+						+ Integer.parseInt(follow_id) + "','" + id + "','" + to
+						+ "','" + new Date() + "','" + permission + "','" + topic + "','"
+						+ validity + "','" + status + "','" + from + "')";
+
+				dbService.runQuery(follow_query, followQuery -> {
+
+					if(followQuery.succeeded())
+					{
+						
+						message = new JsonObject();
+						message.put("permission", permission);
+						message.put("validity", validity);
+						message.put("requested-id", id);
+						message.put("from", from);
+						message.put("to", to);
+						message.put("message-type", message_type);
+						message.put("topic", topic);
+						message.put("follow-id", follow_id);	
+					
+						connection_pool_id = id + apikey;
+						
+						if (!rabbitpool.containsKey(connection_pool_id)) 
+						{
+							broker_client = getRabbitMQClient(connection_pool_id, id, apikey);
+							broker_client.setHandler(broker_client_start_handler -> {
+					
+								if (broker_client_start_handler.succeeded()) 
+								{
+									rabbitpool.get(connection_pool_id).basicPublish(to+"."+"notification", subject, message, null);
+									resp.setStatusCode(202).end(message.toString());
+									return;
+								}
+							});
+						} else
+						{
+							rabbitpool.get(connection_pool_id).basicPublish(to+"."+"notification", subject, message, null);
+							resp.setStatusCode(202).end(message.toString());
+							return;
+						}
+					} else
+					{
+						resp.setStatusCode(500).end("Could not update follow table");
+						return;
+					}
+					});
+			
+			} catch (Exception ex) 
+			{
+				resp.setStatusCode(403).end("Invalid validity value");
+				return;
+			}
+			} else 
+			{
+				resp.setStatusCode(403).end("Invalid permissions");
+				return;
+			}
+		} else 
+		{
+			resp.setStatusCode(403).end("No such owner");
+			return;
+		}	
+		});
+
+		} else
+		{
+			resp.setStatusCode(403).end("Invalid id or apikey");
+			return;
+		}
+		});
+		
+	}
 	
 	private void share(HttpServerRequest req)
 	{
